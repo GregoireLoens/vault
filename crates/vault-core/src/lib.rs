@@ -32,7 +32,7 @@ mod ops;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub use secrecy::SecretString;
+pub use secrecy::{ExposeSecret, SecretString};
 
 pub use crate::crypto::kdf::KdfParams;
 pub use crate::error::{Error, Result};

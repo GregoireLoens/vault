@@ -129,7 +129,18 @@ jobs:
       - name: Installer cargo-llvm-cov si absent du cache
         run: command -v cargo-llvm-cov || cargo install --locked cargo-llvm-cov@${{ env.CARGO_LLVM_COV_VERSION }}
       # Seuil bloquant : toute ligne non couverte fait échouer la fusion.
-      - run: cargo llvm-cov --workspace --all-targets --fail-under-lines 100
+      #
+      # `vault-cli/src/console/tty.rs` en est exclu, et lui seul. Ce fichier ne
+      # contient que la lecture masquée sur le terminal, que cet exécuteur n'a
+      # pas — et CLI-001 interdit de recevoir la passphrase autrement que par
+      # une saisie masquée, donc de la lire depuis un tube pour la rendre
+      # testable. Le principe VIII n'admet qu'une catégorie de dérogation, le
+      # code qui ne peut pas s'exécuter sur la plateforme d'intégration
+      # continue ; celle-ci en relève, et elle est justifiée dans le fichier.
+      - run: |
+          cargo llvm-cov --workspace --all-targets \
+            --ignore-filename-regex 'vault-cli/src/console/tty\.rs' \
+            --fail-under-lines 100
 
   supply-chain:
     name: Dépendances

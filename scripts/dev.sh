@@ -57,7 +57,15 @@ case "$1" in
         ;;
     coverage)
         shift
-        set -- cargo llvm-cov --workspace --all-targets --fail-under-lines 100 "$@"
+        # L'exclusion porte sur un seul fichier, qui ne contient que la lecture
+        # masquée sur le terminal. Un exécuteur d'intégration continue n'a pas
+        # de terminal, et CLI-001 interdit de recevoir la passphrase autrement
+        # que par une saisie masquée : ce code ne peut donc pas s'exécuter sur
+        # la plateforme d'intégration. C'est la seule catégorie de dérogation
+        # que le principe VIII admet, et elle est justifiée dans le fichier.
+        set -- cargo llvm-cov --workspace --all-targets \
+            --ignore-filename-regex 'vault-cli/src/console/tty\.rs' \
+            --fail-under-lines 100 "$@"
         ;;
     shell)
         shift
