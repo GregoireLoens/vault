@@ -1,0 +1,11 @@
+# Outillage IA / Spec Kit — local uniquement, non versionné
+.claude/
+.specify/
+
+# Système / éditeurs
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
