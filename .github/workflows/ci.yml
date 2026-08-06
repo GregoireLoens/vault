@@ -25,11 +25,20 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Versions figées, identiques à celles du Dockerfile : une porte ne doit pas
+  # passer en local et échouer ici parce que l'outil n'a pas la même version.
+  CARGO_DENY_VERSION: 0.20.2
+  CARGO_LLVM_COV_VERSION: 0.8.7
 
 jobs:
   format:
     name: Formatage
     runs-on: ubuntu-latest
+    # Sans délai maximal, un job bloqué tourne jusqu'à six heures. L'incident
+    # GitHub Actions du 2026-08-06 a montré la différence : treize minutes
+    # passées à réessayer de télécharger une action, sans qu'aucune commande
+    # cargo ne démarre.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - run: cargo fmt --all --check
@@ -37,6 +46,7 @@ jobs:
   lint:
     name: Analyse statique
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
@@ -45,7 +55,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: lint-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          key: ${{ runner.os }}-build-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          # Sans restore-keys, la moindre modification de Cargo.lock repart
+          # d'un cache vide et recompile tout le graphe de dépendances.
+          restore-keys: ${{ runner.os }}-build-
       # Les niveaux de lint sont définis dans Cargo.toml ([workspace.lints]) :
       # clippy all + pedantic en deny, unsafe_code interdit.
       - run: cargo clippy --workspace --all-targets --all-features
@@ -53,6 +66,7 @@ jobs:
   build:
     name: Compilation sans avertissement
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       RUSTFLAGS: -D warnings
     steps:
@@ -63,7 +77,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: build-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          key: ${{ runner.os }}-warnings-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-warnings-
       - run: cargo build --workspace --all-targets
 
   test:
@@ -73,6 +88,7 @@ jobs:
     # dérogation (principe VIII).
     name: Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -85,40 +101,49 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: test-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          key: ${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-test-
       - run: cargo test --workspace --all-targets
 
   coverage:
     name: Couverture 100%
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # Le cache des outils est séparé de celui de la compilation : sa clé ne
+      # dépend que de la version de l'outil. Mélangés, la moindre modification
+      # de Cargo.lock forcerait une réinstallation de plusieurs minutes.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-llvm-cov
+          key: ${{ runner.os }}-tool-llvm-cov-${{ env.CARGO_LLVM_COV_VERSION }}
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.cargo/bin/cargo-llvm-cov
             target
-          key: coverage-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          key: ${{ runner.os }}-coverage-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-coverage-
       - name: Installer cargo-llvm-cov si absent du cache
-        run: command -v cargo-llvm-cov || cargo install --locked cargo-llvm-cov
+        run: command -v cargo-llvm-cov || cargo install --locked cargo-llvm-cov@${{ env.CARGO_LLVM_COV_VERSION }}
       # Seuil bloquant : toute ligne non couverte fait échouer la fusion.
       - run: cargo llvm-cov --workspace --all-targets --fail-under-lines 100
 
   supply-chain:
     name: Dépendances
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.cargo/bin/cargo-deny
-          key: deny-${{ hashFiles('**/Cargo.lock', 'deny.toml') }}
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-tool-deny-${{ env.CARGO_DENY_VERSION }}
       - name: Installer cargo-deny si absent du cache
-        run: command -v cargo-deny || cargo install --locked cargo-deny
+        run: command -v cargo-deny || cargo install --locked cargo-deny@${{ env.CARGO_DENY_VERSION }}
       # Aucune dépendance réseau, même transitive (principe III, D-012).
+      # Contrairement au conteneur local, l'exécuteur a le réseau : la
+      # vérification des vulnérabilités peut cloner la base RustSec.
       - run: cargo deny check

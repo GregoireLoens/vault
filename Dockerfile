@@ -9,7 +9,9 @@ RUN rustup component add llvm-tools-preview clippy rustfmt
 
 # cargo-deny  : interdiction des dépendances réseau (D-012, principe III)
 # cargo-llvm-cov : couverture de lignes, seuil bloquant à 100 % (principe VIII)
-RUN cargo install --locked cargo-deny cargo-llvm-cov \
+# Versions figées : la chaîne locale et celle de l'intégration continue doivent
+# appliquer exactement les mêmes règles, sinon une porte passe ici et échoue là.
+RUN cargo install --locked cargo-deny@0.20.2 cargo-llvm-cov@0.8.7 \
     && rm -rf "$CARGO_HOME/registry" "$CARGO_HOME/git"
 
 WORKDIR /work
