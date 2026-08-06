@@ -17,10 +17,11 @@ workspace = true
 [dependencies]
 # Cryptographie — aucune primitive maison (principe II)
 chacha20poly1305 = "0.11.0"
-aead = { version = "0.6.1", features = ["getrandom"] }
+aead = { version = "0.6.1", features = ["getrandom", "alloc"] }
 # La construction STREAM a quitté le crate aead en 0.6 pour vivre dans son
-# propre crate, toujours maintenu par RustCrypto (voir D-003).
-aead-stream = "0.6.0"
+# propre crate, toujours maintenu par RustCrypto (voir D-003). La feature
+# `alloc` est ce qui rend `Vec` utilisable comme tampon de morceau.
+aead-stream = { version = "0.6.0", features = ["alloc"] }
 argon2 = "0.5.3"
 blake3 = "1.8.6"
 zeroize = { version = "1.9.0", features = ["derive"] }
@@ -29,11 +30,22 @@ secrecy = "0.10.3"
 # Format
 ciborium = "0.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
+# Les noms de fichiers sont conservés en octets bruts (VR-I1) : serde_bytes les
+# encode en chaînes d'octets CBOR plutôt qu'en tableaux d'entiers, ce qui donne
+# un index quatre fois plus compact et un format que `docs/format.md` peut
+# décrire par renvoi à la RFC 8949.
+serde_bytes = "0.11.19"
 
 # Système de fichiers
 fd-lock = "4.0.4"
 walkdir = "2.5.0"
 tempfile = "3.27.0"
+# La bibliothèque standard n'expose aucun moyen d'interroger l'espace libre, et
+# `unsafe_code` est interdit dans cet espace de travail : `fs4` enveloppe
+# `statvfs` et `GetDiskFreeSpaceExW` pour FR-029. Aucune dépendance réseau, et
+# les features asynchrones — qui tireraient tokio, banni par deny.toml — sont
+# désactivées.
+fs4 = { version = "1.1.0", default-features = false }
 
 # Divers
 rand = "0.10.2"
