@@ -1,0 +1,124 @@
+# Portes bloquantes du principe VIII — T012, T013
+#
+# Les noms de jobs ci-dessous sont ceux à cocher dans la règle « Require status
+# checks to pass before merging » du ruleset protégeant `main` (T015).
+#
+# Aucune action tierce n'est utilisée : uniquement des actions officielles
+# GitHub. Sur un projet dont l'objet est la protection de données, chaque action
+# tierce est une dépendance de chaîne d'approvisionnement de plus, exécutée avec
+# accès au dépôt. La version de la chaîne Rust vient de rust-toolchain.toml, que
+# le rustup préinstallé sur les exécuteurs applique automatiquement.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  format:
+    name: Formatage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo fmt --all --check
+
+  lint:
+    name: Analyse statique
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: lint-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+      # Les niveaux de lint sont définis dans Cargo.toml ([workspace.lints]) :
+      # clippy all + pedantic en deny, unsafe_code interdit.
+      - run: cargo clippy --workspace --all-targets --all-features
+
+  build:
+    name: Compilation sans avertissement
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: build-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+      - run: cargo build --workspace --all-targets
+
+  test:
+    # La matrice n'est pas un luxe : la décision D-008 prévoit du code
+    # spécifique à Windows, dont la sémantique de rename et de fsync diffère.
+    # Elle est aussi ce qui rend la couverture à 100 % atteignable sans
+    # dérogation (principe VIII).
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: test-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+      - run: cargo test --workspace --all-targets
+
+  coverage:
+    name: Couverture 100%
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-llvm-cov
+            target
+          key: coverage-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Installer cargo-llvm-cov si absent du cache
+        run: command -v cargo-llvm-cov || cargo install --locked cargo-llvm-cov
+      # Seuil bloquant : toute ligne non couverte fait échouer la fusion.
+      - run: cargo llvm-cov --workspace --all-targets --fail-under-lines 100
+
+  supply-chain:
+    name: Dépendances
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-deny
+          key: deny-${{ hashFiles('**/Cargo.lock', 'deny.toml') }}
+      - name: Installer cargo-deny si absent du cache
+        run: command -v cargo-deny || cargo install --locked cargo-deny
+      # Aucune dépendance réseau, même transitive (principe III, D-012).
+      - run: cargo deny check

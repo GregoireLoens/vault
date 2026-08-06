@@ -1,0 +1,8 @@
+# Version de la chaîne d'outils, figée — T002
+#
+# Vaut aussi bien pour le conteneur de développement que pour les exécuteurs
+# d'intégration continue : rustup lit ce fichier et s'aligne dessus, ce qui
+# garantit une chaîne identique partout sans action tierce.
+[toolchain]
+channel = "1.97.1"
+components = ["clippy", "rustfmt", "llvm-tools-preview"]
