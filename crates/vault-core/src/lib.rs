@@ -23,28 +23,16 @@
 //! création, ajout, consultation, extraction, suppression — arrivent avec la
 //! phase 3.
 
-// Dérogation datée, à retirer à la fin de la phase 3.
-//
-// La phase 2 livre le format, la cryptographie et la couche système. Ce sont
-// les opérations de la phase 3 (T035 et suivantes) qui les consommeront depuis
-// la surface publique du crate ; d'ici là, l'analyse de code mort ne les voit
-// employés que par les tests de chaque module, qu'elle ignore.
-//
-// La dérogation porte sur `dead_code` et sur lui seul. Aucune règle de sûreté
-// ni de sécurité n'est neutralisée, la porte de couverture du principe VIII
-// continue d'exiger que chacun de ces éléments soit exercé à 100 %, et le
-// retrait de ces trois attributs fait partie de la définition de terminé de la
-// phase 3.
-#[allow(dead_code)]
 mod crypto;
 mod error;
-#[allow(dead_code)]
 mod format;
-#[allow(dead_code)]
 mod fs;
+mod ops;
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+pub use secrecy::SecretString;
 
 pub use crate::crypto::kdf::KdfParams;
 pub use crate::error::{Error, Result};
@@ -52,6 +40,7 @@ pub use crate::format::blob::{BLOB_ID_LEN, BlobId, MAX_FILE_SIZE};
 pub use crate::format::index::EntryKind;
 pub use crate::format::path::VaultPath;
 pub use crate::format::version::FORMAT_VERSION;
+pub use crate::fs::shred::{ShredCapability, shred_capability};
 
 use crate::crypto::keys::MasterKey;
 use crate::format::header::Header;
@@ -112,7 +101,7 @@ impl Entry {
 }
 
 /// Convertit des secondes Unix en [`SystemTime`], y compris négatives.
-fn unix_seconds_to_time(seconds: i64) -> SystemTime {
+pub(crate) fn unix_seconds_to_time(seconds: i64) -> SystemTime {
     if seconds >= 0 {
         UNIX_EPOCH + Duration::from_secs(seconds.unsigned_abs())
     } else {
@@ -130,10 +119,6 @@ pub struct Vault {
     header: Header,
 }
 
-// Même dérogation datée que ci-dessus : `Vault::new`, `UnlockedVault::new` et
-// la clé maîtresse qu'elle conserve n'ont d'appelant qu'à partir des
-// opérations d'ouverture de la phase 3 (T035, T036).
-#[allow(dead_code)]
 impl Vault {
     /// Construit un vault verrouillé depuis son en-tête déjà lu.
     ///
@@ -172,7 +157,6 @@ impl Vault {
 /// Détient la clé maîtresse, l'index déchiffré et le verrou exclusif. Efface
 /// ses secrets à sa libération (C-006).
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct UnlockedVault {
     path: PathBuf,
     header: Header,
@@ -185,7 +169,6 @@ pub struct UnlockedVault {
 }
 
 impl UnlockedVault {
-    #[allow(dead_code)]
     pub(crate) fn new(
         path: PathBuf,
         header: Header,
@@ -225,31 +208,6 @@ impl UnlockedVault {
     #[must_use]
     pub fn index_version(&self) -> u64 {
         self.index.index_version()
-    }
-
-    /// Les entrées situées sous `under`, ou toutes depuis la racine.
-    ///
-    /// C-014 : ne produit aucune écriture sur disque, pas même un temporaire.
-    #[must_use]
-    pub fn list(&self, under: Option<&VaultPath>) -> Vec<Entry> {
-        let racine = VaultPath::root();
-        self.index
-            .list(under.unwrap_or(&racine))
-            .into_iter()
-            .map(Entry::from_index)
-            .collect()
-    }
-
-    /// L'entrée située à ce chemin.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::NotFound`] si aucune entrée n'occupe ce chemin.
-    pub fn stat(&self, path: &VaultPath) -> Result<Entry> {
-        self.index
-            .get(path)
-            .map(Entry::from_index)
-            .ok_or(Error::NotFound)
     }
 
     /// Délai d'inactivité avant verrouillage automatique.
@@ -312,26 +270,22 @@ mod tests {
 
     fn index_peuple() -> Index {
         let mut index = Index::new();
-        index
-            .insert(IndexEntry {
-                path: chemin(&[b"photos"]),
-                kind: EntryKind::Directory,
-                size: None,
-                modified: 1_700_000_000,
-                blob_id: None,
-                blob_padded_size: None,
-            })
-            .expect("ajoutable");
-        index
-            .insert(IndexEntry {
-                path: chemin(&[b"photos", b"plage.jpg"]),
-                kind: EntryKind::File,
-                size: Some(4242),
-                modified: -1,
-                blob_id: Some(BlobId::generate()),
-                blob_padded_size: Some(4096),
-            })
-            .expect("ajoutable");
+        index.replace(IndexEntry {
+            path: chemin(&[b"photos"]),
+            kind: EntryKind::Directory,
+            size: None,
+            modified: 1_700_000_000,
+            blob_id: None,
+            blob_padded_size: None,
+        });
+        index.replace(IndexEntry {
+            path: chemin(&[b"photos", b"plage.jpg"]),
+            kind: EntryKind::File,
+            size: Some(4242),
+            modified: -1,
+            blob_id: Some(BlobId::generate()),
+            blob_padded_size: Some(4096),
+        });
         index
     }
 

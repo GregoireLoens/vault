@@ -126,6 +126,9 @@ impl Header {
     /// # Errors
     ///
     /// [`Error::Authentication`] si la dérivation échoue.
+    ///
+    /// Dérogation datée : l'appelant est `vault passwd`, phase 6.
+    #[allow(dead_code)]
     pub(crate) fn rewrap(
         &mut self,
         master_key: &MasterKey,

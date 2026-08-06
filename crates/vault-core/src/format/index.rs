@@ -90,16 +90,6 @@ impl Index {
         self.index_version
     }
 
-    /// Nombre d'entrées.
-    pub(crate) fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Toutes les entrées, triées par chemin.
-    pub(crate) fn entries(&self) -> impl ExactSizeIterator<Item = &IndexEntry> {
-        self.entries.iter()
-    }
-
     /// L'entrée située à ce chemin.
     pub(crate) fn get(&self, path: &VaultPath) -> Option<&IndexEntry> {
         self.position(path).ok().map(|index| &self.entries[index])
@@ -111,22 +101,6 @@ impl Index {
             .iter()
             .filter(|entry| entry.path.starts_with(under))
             .collect()
-    }
-
-    /// Ajoute une entrée.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::AlreadyExists`] si une entrée occupe déjà ce chemin (VR-I3).
-    pub(crate) fn insert(&mut self, entry: IndexEntry) -> Result<()> {
-        match self.position(&entry.path) {
-            Ok(_) => Err(Error::AlreadyExists),
-            Err(position) => {
-                self.entries.insert(position, entry);
-                self.index_version += 1;
-                Ok(())
-            }
-        }
     }
 
     /// Ajoute une entrée, ou remplace celle qui occupe déjà ce chemin.
@@ -144,6 +118,11 @@ impl Index {
         }
     }
 
+    // Dérogation datée : la suppression relève de la phase 5 (T058 et
+    // suivantes) et le balayage des blobs orphelins de T054. Les deux sont
+    // écrits et testés ici parce qu'ils font partie du format ; leurs appelants
+    // arrivent avec ces tâches.
+    #[allow(dead_code)]
     /// Retire une entrée et, si `recursive`, toute sa descendance.
     ///
     /// Renvoie les entrées retirées : l'appelant délie leurs blobs **après**
@@ -184,6 +163,7 @@ impl Index {
     ///
     /// VR-I6 : un blob présent dans `objects/` mais absent de cet ensemble est
     /// un déchet, supprimable au déverrouillage suivant.
+    #[allow(dead_code)]
     pub(crate) fn referenced_blobs(&self) -> BTreeSet<BlobId> {
         self.entries
             .iter()
@@ -330,27 +310,19 @@ mod tests {
 
     fn index_peuple() -> Index {
         let mut index = Index::new();
-        index
-            .insert(dossier(chemin(&[b"photos"])))
-            .expect("ajoutable");
-        index
-            .insert(fichier(chemin(&[b"photos", b"a.jpg"]), 10))
-            .expect("ajoutable");
-        index
-            .insert(fichier(chemin(&[b"photos", b"b.jpg"]), 20))
-            .expect("ajoutable");
-        index
-            .insert(fichier(chemin(&[b"notes.txt"]), 30))
-            .expect("ajoutable");
+        index.replace(dossier(chemin(&[b"photos"])));
+        index.replace(fichier(chemin(&[b"photos", b"a.jpg"]), 10));
+        index.replace(fichier(chemin(&[b"photos", b"b.jpg"]), 20));
+        index.replace(fichier(chemin(&[b"notes.txt"]), 30));
         index
     }
 
     #[test]
     fn un_index_neuf_est_vide() {
         let index = Index::new();
-        assert_eq!(index.len(), 0);
+        assert_eq!(index.list(&VaultPath::root()).len(), 0);
         assert_eq!(index.index_version(), 0);
-        assert_eq!(index.entries().len(), 0);
+        assert_eq!(index.list(&VaultPath::root()).len(), 0);
         assert!(index.referenced_blobs().is_empty());
         assert!(index.get(&chemin(&[b"absent"])).is_none());
     }
@@ -358,23 +330,36 @@ mod tests {
     #[test]
     fn les_entrees_restent_triees_quel_que_soit_l_ordre_d_ajout() {
         let index = index_peuple();
-        let chemins: Vec<_> = index.entries().map(|entry| entry.path.clone()).collect();
+        let chemins: Vec<_> = index
+            .list(&VaultPath::root())
+            .into_iter()
+            .map(|entry| entry.path.clone())
+            .collect();
         let mut attendus = chemins.clone();
         attendus.sort();
         assert_eq!(chemins, attendus);
-        assert_eq!(index.len(), 4);
+        assert_eq!(index.list(&VaultPath::root()).len(), 4);
         assert_eq!(index.index_version(), 4);
     }
 
-    /// VR-I3 : deux entrées ne peuvent pas partager le même chemin.
+    /// VR-I3 : deux entrées ne peuvent pas partager le même chemin. C'est
+    /// `replace` qui le garantit — écrire au même chemin remplace, et ne
+    /// duplique jamais. La *politique* de collision, elle, est appliquée en
+    /// amont par [`crate::ops`], qui décide de refuser, remplacer ou renommer.
     #[test]
-    fn un_chemin_deja_pris_est_refuse() {
+    fn deux_entrees_ne_peuvent_pas_partager_un_chemin() {
         let mut index = index_peuple();
-        assert!(matches!(
-            index.insert(fichier(chemin(&[b"notes.txt"]), 1)),
-            Err(Error::AlreadyExists)
-        ));
-        assert_eq!(index.len(), 4);
+        index.replace(fichier(chemin(&[b"notes.txt"]), 1));
+
+        assert_eq!(index.list(&VaultPath::root()).len(), 4);
+        let chemins: Vec<_> = index
+            .list(&VaultPath::root())
+            .into_iter()
+            .map(|entree| entree.path.clone())
+            .collect();
+        let mut uniques = chemins.clone();
+        uniques.dedup();
+        assert_eq!(chemins, uniques);
     }
 
     #[test]
@@ -390,7 +375,7 @@ mod tests {
         );
 
         assert!(index.replace(fichier(chemin(&[b"neuf.txt"]), 1)).is_none());
-        assert_eq!(index.len(), 5);
+        assert_eq!(index.list(&VaultPath::root()).len(), 5);
     }
 
     #[test]
@@ -409,7 +394,7 @@ mod tests {
             .remove(&chemin(&[b"photos"]), true)
             .expect("retirable");
         assert_eq!(retirees.len(), 3);
-        assert_eq!(index.len(), 1);
+        assert_eq!(index.list(&VaultPath::root()).len(), 1);
         assert!(index.get(&chemin(&[b"photos", b"a.jpg"])).is_none());
     }
 
@@ -420,7 +405,7 @@ mod tests {
             index.remove(&chemin(&[b"photos"]), false),
             Err(Error::DirectoryNotEmpty)
         ));
-        assert_eq!(index.len(), 4);
+        assert_eq!(index.list(&VaultPath::root()).len(), 4);
 
         assert!(matches!(
             index.remove(&chemin(&[b"absent"]), true),
@@ -583,14 +568,12 @@ mod tests {
     fn les_entrees_gardent_leurs_octets_bruts() {
         let master = MasterKey::generate();
         let mut index = Index::new();
-        index
-            .insert(fichier(chemin(&[&[0xff, 0xfe, b'x']]), 1))
-            .expect("ajoutable");
+        index.replace(fichier(chemin(&[&[0xff, 0xfe, b'x']]), 1));
 
         let relu = Index::decrypt(&master, &index.encrypt(&master).expect("chiffrable"))
             .expect("déchiffrable");
         assert_eq!(
-            relu.entries().next().expect("une entrée").path.file_name(),
+            relu.list(&VaultPath::root())[0].path.file_name(),
             Some(&[0xff, 0xfe, b'x'][..])
         );
     }
@@ -601,7 +584,7 @@ mod tests {
     fn l_effacement_vide_l_index() {
         let mut index = index_peuple();
         index.zeroize();
-        assert_eq!(index.len(), 0);
+        assert_eq!(index.list(&VaultPath::root()).len(), 0);
         assert_eq!(index.index_version(), 0);
         assert_eq!(index, Index::new());
     }

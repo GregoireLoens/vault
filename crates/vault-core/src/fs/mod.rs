@@ -6,4 +6,5 @@
 
 pub(crate) mod atomic;
 pub(crate) mod lock;
+pub(crate) mod shred;
 pub(crate) mod space;
