@@ -1,6 +1,13 @@
 # Outillage IA / Spec Kit — local uniquement, non versionné
 .claude/
 .specify/
+specs/
+
+# Rust
+target/
+
+# Cache Cargo du conteneur de développement (bind mount)
+.docker-cache/
 
 # Système / éditeurs
 .DS_Store
