@@ -15,6 +15,14 @@
 //! un autre processus peut consommer l'espace. Elle transforme le cas courant
 //! — « il manque manifestement de la place » — en refus net et immédiat, sans
 //! prétendre à une garantie que le système de fichiers ne donne pas.
+//!
+//! # Un chemin absent ne se comporte pas partout pareil
+//!
+//! `statvfs` échoue sur un chemin qui n'existe pas ; `GetDiskFreeSpaceExW`
+//! remonte jusqu'au volume et **réussit**. Ces fonctions ne sont donc pas un
+//! moyen fiable de savoir si un répertoire existe, et aucun appelant ne doit
+//! s'en servir ainsi : [`crate::UnlockedVault::extract`] vérifie l'existence de
+//! sa destination explicitement, avant d'arriver ici.
 
 use std::path::Path;
 
@@ -74,6 +82,13 @@ mod tests {
         ));
     }
 
+    /// Sous Unix, interroger un chemin absent échoue, et l'erreur remonte.
+    ///
+    /// Ce test est réservé aux systèmes POSIX : `GetDiskFreeSpaceExW` remonte
+    /// jusqu'au volume et réussirait — voir la note de module. Aucun appelant
+    /// ne s'appuie sur cette différence, l'existence de la destination étant
+    /// vérifiée en amont.
+    #[cfg(unix)]
     #[test]
     fn un_chemin_inexistant_remonte_une_erreur() {
         let repertoire = tempfile::tempdir().expect("répertoire temporaire");

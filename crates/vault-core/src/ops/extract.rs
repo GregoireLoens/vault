@@ -39,6 +39,8 @@ impl UnlockedVault {
     /// # Errors
     ///
     /// - [`Error::NotFound`] si le chemin n'existe pas dans le vault ;
+    /// - [`Error::Io`] de type `NotFound` si le répertoire de destination
+    ///   n'existe pas ;
     /// - [`Error::InsufficientSpace`] si la place manque, **avant** écriture
     ///   (FR-029, C-015) ;
     /// - [`Error::AlreadyExists`] si la destination est occupée et que
@@ -50,6 +52,22 @@ impl UnlockedVault {
         let entrees: Vec<IndexEntry> = self.index.list(path).into_iter().cloned().collect();
         if entrees.is_empty() {
             return Err(Error::NotFound);
+        }
+
+        // La destination doit exister, et c'est vérifié explicitement.
+        //
+        // S'en remettre à la vérification d'espace ne suffit pas : sous Unix,
+        // interroger un chemin absent échoue, mais `GetDiskFreeSpaceExW`
+        // remonte jusqu'au volume et réussit. L'extraction poursuivait alors
+        // sous Windows et créait l'arborescence de destination au premier
+        // `create_dir_all` — un chemin mal tapé produisait une extraction
+        // silencieuse au lieu d'un refus. Créer la destination est une décision
+        // qui appartient à l'appelant, pas une conséquence de la plateforme.
+        if !dest.is_dir() {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "le répertoire de destination n'existe pas",
+            )));
         }
 
         // La somme des tailles réelles, et non des tailles remplies : c'est le
@@ -440,15 +458,30 @@ mod tests {
         ));
     }
 
+    /// La destination absente est refusée sur **toutes** les plateformes, et
+    /// rien n'est créé : c'est ce que la vérification explicite garantit.
     #[test]
     fn une_destination_inexistante_est_signalee() {
         let atelier = atelier();
+        let absente = atelier.chemin.join("nulle-part");
+
+        let erreur = atelier
+            .vault
+            .extract(&chemin(&[b"note.txt"]), &absente, OnConflict::Fail)
+            .expect_err("la destination n'existe pas");
         assert!(matches!(
-            atelier.vault.extract(
-                &chemin(&[b"note.txt"]),
-                &atelier.chemin.join("nulle-part"),
-                OnConflict::Fail
-            ),
+            erreur,
+            Error::Io(ref io) if io.kind() == std::io::ErrorKind::NotFound
+        ));
+        assert!(!absente.exists(), "rien ne doit avoir été créé");
+
+        // Un fichier ordinaire n'est pas davantage un répertoire de destination.
+        let fichier = atelier.chemin.join("pas-un-dossier");
+        std::fs::write(&fichier, b"occupe").expect("écrivable");
+        assert!(matches!(
+            atelier
+                .vault
+                .extract(&chemin(&[b"note.txt"]), &fichier, OnConflict::Fail),
             Err(Error::Io(_))
         ));
     }
