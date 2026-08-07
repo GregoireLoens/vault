@@ -25,7 +25,6 @@
 //! remplacement de l'index serait impossible. Le `fsync` de répertoire n'y a
 //! pas d'équivalent et n'y est pas tenté.
 
-use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
@@ -122,7 +121,7 @@ fn replace(from: &Path, to: &Path) -> Result<()> {
 /// coupure.
 #[cfg(unix)]
 fn sync_dir(directory: &Path) -> Result<()> {
-    File::open(directory)?.sync_all()?;
+    std::fs::File::open(directory)?.sync_all()?;
     Ok(())
 }
 
