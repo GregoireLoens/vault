@@ -256,7 +256,13 @@ fn un_refus_en_amont_n_ecrit_rien() {
 }
 
 /// FR-023, C-009 : un fichier au-delà de la limite est refusé **avant** toute
-/// écriture. Le fichier est créé creux, donc sans consommer 4 Go sur le disque.
+/// écriture, et le vault reste rigoureusement inchangé.
+///
+/// Le fichier est créé creux, ce qui ne coûte rien sur ext4. Ce test est
+/// réservé à Linux : sur NTFS, `set_len` réserve réellement les quatre
+/// gigaoctets. La garde de taille elle-même est vérifiée sur toutes les
+/// plateformes par les tests unitaires de `ops/add.rs`.
+#[cfg(target_os = "linux")]
 #[test]
 fn un_fichier_trop_volumineux_est_refuse_sans_rien_ecrire() {
     let atelier = tempfile::tempdir().expect("répertoire temporaire");

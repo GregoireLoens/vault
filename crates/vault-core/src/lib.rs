@@ -38,7 +38,7 @@ pub use crate::crypto::kdf::KdfParams;
 pub use crate::error::{Error, Result};
 pub use crate::format::blob::{BLOB_ID_LEN, BlobId, MAX_FILE_SIZE};
 pub use crate::format::index::EntryKind;
-pub use crate::format::path::VaultPath;
+pub use crate::format::path::{NamingRules, VaultPath};
 pub use crate::format::version::FORMAT_VERSION;
 pub use crate::fs::shred::{ShredCapability, shred_capability};
 

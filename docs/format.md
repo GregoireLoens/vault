@@ -241,9 +241,20 @@ Deux conséquences, assumées :
 
 - **Deux noms qui ne diffèrent que par leur normalisation Unicode sont deux entrées distinctes.**
   `café` en forme composée et `café` en forme décomposée cohabitent dans le même dossier.
-- Sous Windows, où un nom de fichier est de l'UTF-16 et non une suite d'octets arbitraires, un
-  composant qui n'est pas de l'UTF-8 valide est **listable mais non extractible** tel quel. La
-  limite est réelle et signalée plutôt que contournée par une conversion approximative.
+- **Tous les hôtes n'acceptent pas toutes les suites d'octets.** Un vault se transporte d'une
+  plateforme à l'autre, et une entrée parfaitement valide dans le format peut être inextractible
+  ailleurs :
+
+  | Plateforme | Ce qu'elle accepte comme nom de fichier |
+  |---|---|
+  | Linux, et la plupart des systèmes POSIX | tout octet, sauf `/` et l'octet nul |
+  | macOS — APFS et HFS+ | UTF-8 valide obligatoire ; le noyau refuse le reste |
+  | Windows — NTFS | UTF-8 valide, sans `< > : " \| ? *` ni caractère de contrôle, sans point ni espace final, et hors noms de périphériques réservés (`CON`, `PRN`, `AUX`, `NUL`, `COM0` à `COM9`, `LPT0` à `LPT9`, extension comprise) |
+
+  L'entrée reste **listable et intacte** dans le vault : c'est son écriture à destination qui est
+  impossible, et une implémentation doit la refuser explicitement **avant** d'écrire quoi que ce
+  soit, plutôt que de laisser le système rendre une erreur opaque au milieu d'une arborescence à
+  moitié extraite. Le vault s'extraira sur un hôte dont les règles acceptent ce nom.
 
 ---
 

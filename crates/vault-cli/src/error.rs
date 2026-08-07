@@ -44,6 +44,8 @@ impl CliError {
                 Error::InsufficientSpace { .. } => 6,
                 Error::UnsupportedFormatVersion { .. } => 7,
                 Error::WeakPassphrase { .. } | Error::InvalidPath | Error::InvalidKdfParams => 2,
+                // Corruption, entrée non gérée, dossier peuplé, nom
+                // irreprésentable, entrée-sortie : erreur générique.
                 _ => 1,
             },
         }
@@ -59,6 +61,12 @@ impl CliError {
             }
             Self::Core(Error::AlreadyInUse) => {
                 "Ce vault est déjà ouvert par un autre processus.".to_owned()
+            }
+            Self::Core(Error::UnrepresentableName) => {
+                "Ce nom de fichier n'est pas représentable sur ce système de fichiers. \
+L'entrée reste intacte dans le vault : elle s'extraira sur un système dont les \
+règles de nommage l'acceptent."
+                    .to_owned()
             }
             Self::Core(erreur) => erreur.to_string(),
             Self::Usage(details) => details.clone(),
@@ -90,7 +98,7 @@ mod tests {
 
     #[test]
     fn chaque_erreur_a_le_code_du_contrat() {
-        let cas: [(CliError, i32); 12] = [
+        let cas: [(CliError, i32); 13] = [
             (CliError::Core(Error::Authentication), 3),
             (CliError::Core(Error::AlreadyInUse), 4),
             (CliError::Core(Error::NotFound), 5),
@@ -111,6 +119,7 @@ mod tests {
             (CliError::Core(Error::WeakPassphrase { minimum: 12 }), 2),
             (CliError::Core(Error::InvalidPath), 2),
             (CliError::Core(Error::InvalidKdfParams), 2),
+            (CliError::Core(Error::UnrepresentableName), 1),
             (CliError::Core(Error::Corrupted), 1),
             (CliError::Usage("mauvais argument".to_owned()), 2),
             (CliError::NotInteractive, 2),
@@ -118,7 +127,7 @@ mod tests {
         ];
 
         let codes: Vec<i32> = cas.iter().map(|(erreur, _)| erreur.code()).collect();
-        assert_eq!(codes, vec![3, 4, 5, 6, 7, 2, 2, 2, 1, 2, 2, 2]);
+        assert_eq!(codes, vec![3, 4, 5, 6, 7, 2, 2, 2, 1, 1, 2, 2, 2]);
         for (erreur, _) in &cas {
             assert!(!erreur.message().is_empty());
             assert!(!format!("{erreur:?}").is_empty());

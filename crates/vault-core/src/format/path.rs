@@ -147,13 +147,31 @@ impl VaultPath {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidPath`] si un composant n'est pas représentable sur la
-    /// plateforme courante — cas qui ne peut survenir que sous Windows, dont
-    /// les noms de fichiers sont de l'UTF-16 et non des octets arbitraires.
+    /// [`Error::UnrepresentableName`] si un composant n'est pas représentable
+    /// sous les règles de nommage de la plateforme courante — voir
+    /// [`NamingRules`].
     pub fn to_os_path(&self) -> Result<std::path::PathBuf> {
+        self.to_os_path_under(NamingRules::current())
+    }
+
+    /// Convertit en chemin relatif sous un jeu de règles donné.
+    ///
+    /// Publiée pour deux raisons : elle permet de savoir **avant** un transfert
+    /// si un vault s'extraira sur une plateforme donnée, et elle rend le refus
+    /// vérifiable depuis n'importe quel système — sans quoi la branche de refus
+    /// ne serait exercée que sur les plateformes qui la déclenchent.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::UnrepresentableName`] si un composant n'est pas représentable
+    /// sous ces règles.
+    pub fn to_os_path_under(&self, rules: NamingRules) -> Result<std::path::PathBuf> {
         let mut path = std::path::PathBuf::new();
         for component in &self.components {
-            path.push(os_component(component)?);
+            if !rules.accepts(component) {
+                return Err(Error::UnrepresentableName);
+            }
+            path.push(os_component(component));
         }
         Ok(path)
     }
@@ -191,6 +209,94 @@ impl VaultPath {
     }
 }
 
+/// Ce qu'un système de fichiers hôte accepte comme nom de fichier.
+///
+/// VR-I1 impose de conserver les noms en octets bruts, et c'est ce qui permet de
+/// les restituer à l'identique. Mais **tous les hôtes n'acceptent pas toutes les
+/// suites d'octets**, et un vault se transporte d'une plateforme à l'autre :
+///
+/// | Plateforme | Contrainte |
+/// |---|---|
+/// | Linux et la plupart des systèmes POSIX | tout octet sauf `/` et l'octet nul |
+/// | macOS — APFS et HFS+ | UTF-8 valide obligatoire ; le noyau refuse le reste |
+/// | Windows — NTFS | UTF-8 valide, sans `< > : " \| ? *` ni caractère de contrôle, sans point ni espace final, et hors noms de périphériques réservés |
+///
+/// Ces règles sont énumérées ici plutôt que dispersées dans du code conditionnel
+/// pour deux raisons : elles sont **vérifiables sur n'importe quelle
+/// plateforme**, et l'extraction peut refuser proprement, avant d'écrire quoi
+/// que ce soit, plutôt que de laisser le système rendre une erreur opaque au
+/// milieu d'une arborescence à moitié extraite.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NamingRules {
+    /// Tout octet, hors ceux que VR-I4 écarte déjà.
+    Bytes,
+    /// UTF-8 valide obligatoire.
+    Utf8,
+    /// UTF-8 valide, plus les interdits propres à Windows.
+    Windows,
+}
+
+impl NamingRules {
+    /// Les règles de la plateforme courante.
+    #[must_use]
+    #[cfg(windows)]
+    pub const fn current() -> Self {
+        Self::Windows
+    }
+
+    /// Les règles de la plateforme courante.
+    #[must_use]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub const fn current() -> Self {
+        Self::Utf8
+    }
+
+    /// Les règles de la plateforme courante.
+    #[must_use]
+    #[cfg(not(any(windows, target_os = "macos", target_os = "ios")))]
+    pub const fn current() -> Self {
+        Self::Bytes
+    }
+
+    /// Vrai si ce composant est représentable sous ces règles.
+    #[must_use]
+    pub fn accepts(self, component: &[u8]) -> bool {
+        match self {
+            Self::Bytes => true,
+            Self::Utf8 => std::str::from_utf8(component).is_ok(),
+            Self::Windows => std::str::from_utf8(component).is_ok_and(windows_accepts),
+        }
+    }
+}
+
+/// Caractères que NTFS refuse dans un nom de fichier.
+const WINDOWS_FORBIDDEN: [char; 7] = ['<', '>', ':', '"', '|', '?', '*'];
+
+/// Vrai si Windows accepte ce nom.
+fn windows_accepts(nom: &str) -> bool {
+    !nom.chars()
+        .any(|c| WINDOWS_FORBIDDEN.contains(&c) || c.is_control())
+        && !nom.ends_with('.')
+        && !nom.ends_with(' ')
+        && !est_nom_reserve(nom)
+}
+
+/// Vrai si le nom est celui d'un périphérique réservé de Windows.
+///
+/// La comparaison porte sur le tronc, extension exclue : `CON.txt` est réservé
+/// au même titre que `CON`.
+fn est_nom_reserve(nom: &str) -> bool {
+    let tronc = nom.split('.').next().unwrap_or(nom).to_ascii_uppercase();
+    if matches!(tronc.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+        return true;
+    }
+    ["COM", "LPT"].into_iter().any(|prefixe| {
+        tronc.strip_prefix(prefixe).is_some_and(|reste| {
+            reste.len() == 1 && reste.starts_with(|c: char| c.is_ascii_digit())
+        })
+    })
+}
+
 /// Vérifie qu'un composant respecte VR-I4.
 fn validate(component: &[u8]) -> Result<()> {
     let refuse = component.is_empty()
@@ -205,16 +311,12 @@ fn validate(component: &[u8]) -> Result<()> {
     Ok(())
 }
 
-// Le `Result` est inutile sous Unix, où tout octet est un nom de fichier
-// valide. Il est conservé pour que les deux variantes aient la même signature :
-// sous Windows, la conversion échoue réellement sur un nom non-UTF-8. Une
-// signature qui changerait selon la plateforme déplacerait le `#[cfg]` chez
-// l'appelant, où il serait bien plus facile à oublier.
+// La représentabilité a déjà été vérifiée par `NamingRules::accepts` : ces
+// conversions ne peuvent plus échouer, et n'ont donc pas à rendre un `Result`.
 #[cfg(unix)]
-#[allow(clippy::unnecessary_wraps)]
-fn os_component(component: &[u8]) -> Result<std::ffi::OsString> {
+fn os_component(component: &[u8]) -> std::ffi::OsString {
     use std::os::unix::ffi::OsStringExt;
-    Ok(std::ffi::OsString::from_vec(component.to_vec()))
+    std::ffi::OsString::from_vec(component.to_vec())
 }
 
 #[cfg(unix)]
@@ -223,22 +325,16 @@ fn os_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
     name.as_bytes().to_vec()
 }
 
-// Sous Windows, un nom de fichier n'est pas une suite d'octets arbitraires
-// mais de l'UTF-16 : seuls les composants qui sont de l'UTF-8 valide peuvent
-// être restitués. Un vault créé sous Unix avec un nom non-UTF-8 est donc
-// listable mais non extractible tel quel sous Windows — la limite est réelle
-// et doit apparaître dans `docs/format.md` plutôt que d'être contournée par
-// une conversion approximative qui trahirait FR-027.
+// Sous Windows, un nom de fichier est de l'UTF-16 : `NamingRules::Windows` a
+// déjà garanti que le composant est de l'UTF-8 valide, si bien que la
+// conversion « avec perte » n'en subit aucune.
 //
-// Ces deux fonctions n'existent pas dans la compilation Linux : elles ne
-// créent donc aucune ligne non couverte sur la plateforme d'intégration
-// continue, et sont exercées par la matrice Windows de la CI.
+// Ce code n'existe pas dans la compilation Linux : il ne crée aucune ligne non
+// couverte sur la plateforme d'intégration continue, et la matrice Windows de
+// la CI l'exerce.
 #[cfg(windows)]
-fn os_component(component: &[u8]) -> Result<std::ffi::OsString> {
-    match std::str::from_utf8(component) {
-        Ok(text) => Ok(std::ffi::OsString::from(text)),
-        Err(_) => Err(Error::InvalidPath),
-    }
+fn os_component(component: &[u8]) -> std::ffi::OsString {
+    std::ffi::OsString::from(String::from_utf8_lossy(component).into_owned())
 }
 
 #[cfg(windows)]
@@ -382,6 +478,89 @@ mod tests {
         ciborium::into_writer(&forge, &mut encoded).expect("encodable");
         let decoded: std::result::Result<VaultPath, _> = ciborium::from_reader(&encoded[..]);
         assert!(decoded.is_err());
+    }
+
+    /// Les trois jeux de règles, vérifiés depuis n'importe quelle plateforme.
+    #[test]
+    fn les_regles_de_nommage_disent_ce_que_chaque_hote_accepte() {
+        let portable = b"photo-01 (copie).jpg";
+        for regles in [NamingRules::Bytes, NamingRules::Utf8, NamingRules::Windows] {
+            assert!(regles.accepts(portable), "{regles:?}");
+        }
+
+        // Octets non-UTF-8 : Linux les accepte, macOS et Windows non.
+        let non_utf8 = &[0xff, 0xfe][..];
+        assert!(NamingRules::Bytes.accepts(non_utf8));
+        assert!(!NamingRules::Utf8.accepts(non_utf8));
+        assert!(!NamingRules::Windows.accepts(non_utf8));
+
+        // Interdits propres à Windows, tous de l'UTF-8 valide par ailleurs.
+        // Les verdicts sont collectés puis comparés d'un bloc : un message de
+        // diagnostic par itération ne serait jamais évalué, donc jamais
+        // couvert (principe VIII).
+        let refuses_par_windows: [&[u8]; 17] = [
+            b"deux:points",
+            b"eto*ile",
+            b"interro?gation",
+            b"chevron<",
+            b"chevron>",
+            b"barre|verticale",
+            b"guillemet\"",
+            b"controle\x01",
+            b"point.final.",
+            b"espace final ",
+            b"CON",
+            b"con.txt",
+            b"NUL",
+            b"aux",
+            b"PRN.log",
+            b"COM1",
+            b"lpt9.txt",
+        ];
+        let verdicts: Vec<(bool, bool)> = refuses_par_windows
+            .iter()
+            .map(|nom| {
+                (
+                    NamingRules::Utf8.accepts(nom),
+                    NamingRules::Windows.accepts(nom),
+                )
+            })
+            .collect();
+        assert_eq!(
+            verdicts,
+            vec![(true, false); refuses_par_windows.len()],
+            "{refuses_par_windows:?}"
+        );
+
+        // Ces noms ressemblent à des réservés sans en être.
+        let acceptes: [&[u8]; 4] = [b"CONTACT", b"COM", b"COM10", b"NULLE"];
+        let verdicts: Vec<bool> = acceptes
+            .iter()
+            .map(|nom| NamingRules::Windows.accepts(nom))
+            .collect();
+        assert_eq!(verdicts, vec![true; acceptes.len()], "{acceptes:?}");
+
+        assert_eq!(NamingRules::current(), NamingRules::current());
+        assert!(format!("{:?}", NamingRules::Bytes).contains("Bytes"));
+    }
+
+    /// Un nom parfaitement valide dans le vault peut être inextractible
+    /// ailleurs. Le refus arrive **avant** toute écriture.
+    #[test]
+    fn un_nom_non_representable_est_refuse_sous_les_regles_de_l_hote() {
+        let hostile = chemin(&[b"rapport:2026.txt"]);
+
+        assert!(hostile.to_os_path_under(NamingRules::Bytes).is_ok());
+        assert!(matches!(
+            hostile.to_os_path_under(NamingRules::Windows),
+            Err(Error::UnrepresentableName)
+        ));
+
+        // Sur la plateforme courante, la conversion suit `current()`.
+        assert_eq!(
+            hostile.to_os_path().is_ok(),
+            NamingRules::current().accepts(b"rapport:2026.txt")
+        );
     }
 
     #[test]

@@ -57,11 +57,7 @@ impl UnlockedVault {
         on_conflict: OnConflict,
     ) -> Result<Entry> {
         let metadata = regular_file_metadata(source)?;
-        if metadata.len() > MAX_FILE_SIZE {
-            return Err(Error::FileTooLarge {
-                limit: MAX_FILE_SIZE,
-            });
-        }
+        ensure_within_limit(metadata.len())?;
 
         let (chemin, evincee) = self.resolve_conflict(dest, on_conflict)?;
         let instantane = self.index.clone();
@@ -201,11 +197,7 @@ impl UnlockedVault {
                 // plutôt qu'un traitement à moitié (C-012).
                 return Err(Error::UnsupportedEntry);
             }
-            if metadata.len() > MAX_FILE_SIZE {
-                return Err(Error::FileTooLarge {
-                    limit: MAX_FILE_SIZE,
-                });
-            }
+            ensure_within_limit(metadata.len())?;
 
             progress(entree.path());
 
@@ -363,6 +355,20 @@ impl UnlockedVault {
     }
 }
 
+/// Refuse un contenu au-delà de la limite du format (FR-022, FR-023).
+///
+/// C-009 exige que le refus arrive **avant** toute écriture : la garde ne prend
+/// donc que la taille annoncée par les métadonnées, ce qui la rend vérifiable
+/// sans fabriquer un fichier de quatre gigaoctets.
+fn ensure_within_limit(taille: u64) -> Result<()> {
+    if taille > MAX_FILE_SIZE {
+        return Err(Error::FileTooLarge {
+            limit: MAX_FILE_SIZE,
+        });
+    }
+    Ok(())
+}
+
 /// Métadonnées d'un fichier ordinaire.
 ///
 /// `symlink_metadata` et non `metadata` : un lien symbolique doit être refusé,
@@ -489,20 +495,45 @@ mod tests {
         assert!(source.exists(), "le mode copie conserve l'original");
     }
 
-    /// FR-023, C-009 : la limite de taille est appliquée avant toute écriture.
-    /// Le fichier est créé creux, donc sans consommer 4 Go sur le disque.
+    /// FR-022, FR-023 : la garde de taille, vérifiée sur ses bornes exactes.
+    #[test]
+    fn la_limite_de_taille_est_celle_du_format() {
+        assert!(ensure_within_limit(0).is_ok());
+        assert!(ensure_within_limit(MAX_FILE_SIZE).is_ok());
+        assert!(matches!(
+            ensure_within_limit(MAX_FILE_SIZE + 1),
+            Err(Error::FileTooLarge { limit }) if limit == MAX_FILE_SIZE
+        ));
+        assert!(matches!(
+            ensure_within_limit(u64::MAX),
+            Err(Error::FileTooLarge { .. })
+        ));
+    }
+
+    /// C-009 : le refus arrive avant qu'un seul blob ne soit écrit.
+    ///
+    /// Le fichier est créé creux. Ce test est réservé à Linux : sur NTFS,
+    /// `set_len` réserve réellement les quatre gigaoctets, et trois tests de ce
+    /// genre exécutés en parallèle remplissaient le disque de l'exécuteur
+    /// d'intégration continue. La garde elle-même est vérifiée sur toutes les
+    /// plateformes par le test ci-dessus.
+    #[cfg(target_os = "linux")]
     #[test]
     fn un_fichier_trop_volumineux_est_refuse_sans_rien_ecrire() {
         let mut atelier = atelier();
         let source = atelier.chemin.join("enorme.bin");
-        let fichier = std::fs::File::create(&source).expect("créable");
-        fichier
+        std::fs::File::create(&source)
+            .expect("créable")
             .set_len(MAX_FILE_SIZE + 1)
             .expect("taille réservable");
-        drop(fichier);
 
         assert!(matches!(
-            atelier.vault.add_file(&source, &chemin("enorme.bin"), AddMode::Copy, OnConflict::Fail),
+            atelier.vault.add_file(
+                &source,
+                &chemin("enorme.bin"),
+                AddMode::Copy,
+                OnConflict::Fail
+            ),
             Err(Error::FileTooLarge { limit }) if limit == MAX_FILE_SIZE
         ));
         assert_eq!(
@@ -883,37 +914,6 @@ mod tests {
         assert!(
             source.join("a-ordinaire.txt").exists(),
             "aucun original ne doit avoir été touché"
-        );
-    }
-
-    /// FR-023 dans l'ajout récursif : la limite vaut aussi au fil du parcours.
-    #[test]
-    fn un_fichier_trop_volumineux_arrete_l_ajout_recursif() {
-        let mut atelier = atelier();
-        let source = atelier.chemin.join("arbre");
-        std::fs::create_dir(&source).expect("créable");
-        std::fs::write(source.join("a-petit.txt"), b"contenu").expect("écrivable");
-        std::fs::File::create(source.join("z-enorme.bin"))
-            .expect("créable")
-            .set_len(MAX_FILE_SIZE + 1)
-            .expect("taille réservable");
-
-        assert!(matches!(
-            atelier.vault.add_dir(
-                &source,
-                &VaultPath::root(),
-                AddMode::Copy,
-                OnConflict::Fail,
-                &mut sans_progression,
-            ),
-            Err(Error::FileTooLarge { limit }) if limit == MAX_FILE_SIZE
-        ));
-        assert!(atelier.vault.list(None).is_empty());
-        assert_eq!(
-            std::fs::read_dir(atelier.vault.path().join("objects"))
-                .expect("listable")
-                .count(),
-            0
         );
     }
 

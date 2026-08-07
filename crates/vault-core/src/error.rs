@@ -82,6 +82,17 @@ pub enum Error {
     #[error("vault corrompu")]
     Corrupted,
 
+    /// Le nom d'une entrée n'est pas représentable sur le système de fichiers
+    /// de destination.
+    ///
+    /// Les noms sont conservés en octets bruts (VR-I1), ce qui permet de les
+    /// restituer à l'identique — mais tous les hôtes n'acceptent pas toutes les
+    /// suites d'octets. Voir [`crate::NamingRules`]. L'entrée reste listable et
+    /// intacte dans le vault ; c'est son écriture à destination qui est
+    /// impossible ici.
+    #[error("ce nom n'est pas représentable sur ce système de fichiers")]
+    UnrepresentableName,
+
     /// Un chemin de vault viole les règles de composition (VR-I4).
     ///
     /// Ne rapporte **pas** le composant fautif : ce serait un nom d'entrée
@@ -163,6 +174,7 @@ mod tests {
             .to_string(),
             Error::Corrupted.to_string(),
             Error::InvalidPath.to_string(),
+            Error::UnrepresentableName.to_string(),
             Error::WeakPassphrase { minimum: 12 }.to_string(),
             Error::InvalidKdfParams.to_string(),
         ];

@@ -219,42 +219,73 @@ fn la_date_de_modification_est_restituee() {
 }
 
 /// VR-I1 : deux noms qui ne diffèrent que par leur normalisation Unicode sont
-/// deux entrées distinctes, et chacune ressort avec ses octets d'origine.
+/// deux entrées distinctes du vault.
+///
+/// La distinction est vérifiée **dans le vault**, à partir d'une source unique.
+/// Écrire les deux formes côte à côte sur le disque ne prouverait rien de
+/// portable : APFS est insensible à la normalisation et les fusionnerait, si
+/// bien que le test mesurerait le système de fichiers hôte au lieu du format.
 #[test]
 fn deux_normalisations_unicode_restent_distinctes() {
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
     let mut vault = Vault::create(&atelier.path().join("coffre"), passphrase(), params())
         .expect("vault créable");
 
-    let compose = atelier.path().join("café.txt");
-    let decompose = atelier.path().join("cafe\u{0301}.txt");
-    std::fs::write(&compose, "composé".as_bytes()).expect("écrivable");
-    std::fs::write(&decompose, "décomposé".as_bytes()).expect("écrivable");
+    let source = atelier.path().join("source.txt");
+    std::fs::write(&source, b"contenu").expect("écrivable");
+
+    let compose = chemin(&["café.txt".as_bytes()]);
+    let decompose = chemin(&["cafe\u{0301}.txt".as_bytes()]);
+    assert_ne!(compose, decompose, "les octets diffèrent");
 
     vault
-        .add_file(
-            &compose,
-            &chemin(&["café.txt".as_bytes()]),
-            AddMode::Copy,
-            OnConflict::Fail,
-        )
+        .add_file(&source, &compose, AddMode::Copy, OnConflict::Fail)
         .expect("ajoutable");
     vault
-        .add_file(
-            &decompose,
-            &chemin(&["cafe\u{0301}.txt".as_bytes()]),
-            AddMode::Copy,
-            OnConflict::Fail,
-        )
-        .expect("ajoutable");
+        .add_file(&source, &decompose, AddMode::Copy, OnConflict::Fail)
+        .expect("la seconde forme n'est pas une collision");
 
     assert_eq!(vault.list(None).len(), 2, "deux entrées distinctes");
+    assert!(vault.stat(&compose).is_ok());
+    assert!(vault.stat(&decompose).is_ok());
 }
 
-/// SC-002 sous forme de propriété : *tout* fichier ajouté puis extrait est
-/// identique. `proptest` explore les noms hostiles, les tailles et les
-/// profondeurs d'arborescence.
-fn composant_valide() -> impl Strategy<Value = Vec<u8>> {
+// SC-002 sous forme de propriété. Deux propriétés, en réalité, parce que le
+// vault et le système de fichiers hôte n'acceptent pas les mêmes noms.
+//
+// VR-I1 conserve les noms en **octets bruts** : le vault accepte donc tout ce
+// que VR-I4 ne refuse pas, y compris des suites qui ne sont pas de l'UTF-8.
+// Mais un hôte est plus exigeant — macOS impose de l'UTF-8 valide, NTFS
+// interdit en plus une liste de caractères et de noms réservés. Explorer les
+// noms hostiles *jusqu'à l'extraction* reviendrait donc à exiger du système de
+// fichiers ce qu'il ne sait pas faire, et c'est ce qui faisait échouer cette
+// suite sur les exécuteurs macOS et Windows.
+//
+// La séparation suit cette frontière : l'aller-retour complet emprunte un
+// alphabet que les trois jeux de règles acceptent, et l'exploration hostile
+// s'arrête à l'index — là où la fidélité est promise sur toutes les
+// plateformes.
+
+/// Alphabet accepté par [`NamingRules::Bytes`], `Utf8` **et** `Windows`.
+///
+/// Le préfixe et le suffixe garantissent qu'aucun nom n'est vide, ne vaut `.`
+/// ou `..`, ne se termine par un point ou une espace, et ne heurte un nom de
+/// périphérique réservé.
+fn composant_portable() -> impl Strategy<Value = Vec<u8>> {
+    prop::collection::vec(
+        prop::sample::select(vec!['a', 'B', '9', '-', '_', ' ', '.', 'é', 'ß', '漢']),
+        0..=9,
+    )
+    .prop_map(|caracteres| {
+        let mut nom = String::from("f");
+        nom.extend(caracteres);
+        nom.push('z');
+        nom.into_bytes()
+    })
+}
+
+/// Composants que le **vault** accepte, hostiles pour l'hôte ou non.
+fn composant_hostile() -> impl Strategy<Value = Vec<u8>> {
     prop::collection::vec(any::<u8>(), 1..=10).prop_filter("composant refusé par VR-I4", |octets| {
         octets != b"."
             && octets != b".."
@@ -267,9 +298,10 @@ proptest! {
     // Chaque cas crée un vault, donc dérive une clé Argon2id.
     #![proptest_config(ProptestConfig::with_cases(48))]
 
+    /// Tout fichier ajouté puis extrait est identique, contenu et nom compris.
     #[test]
     fn tout_fichier_ajoute_puis_extrait_est_identique(
-        composants in prop::collection::vec(composant_valide(), 1..=4),
+        composants in prop::collection::vec(composant_portable(), 1..=4),
         contenu in prop::collection::vec(any::<u8>(), 0..=5000),
     ) {
         let atelier = tempfile::tempdir().expect("répertoire temporaire");
@@ -300,5 +332,43 @@ proptest! {
                 .expect("représentable"),
         );
         prop_assert_eq!(std::fs::read(&attendu).expect("lisible"), contenu);
+    }
+
+    /// VR-I1 : **tout** nom que le vault accepte ressort de l'index avec ses
+    /// octets d'origine, y compris ceux qu'aucun hôte ne saurait écrire. La
+    /// propriété tient sur toutes les plateformes, parce qu'elle ne touche
+    /// jamais au système de fichiers de destination.
+    #[test]
+    fn tout_nom_hostile_traverse_l_index_intact(
+        composants in prop::collection::vec(composant_hostile(), 1..=4),
+        contenu in prop::collection::vec(any::<u8>(), 0..=200),
+    ) {
+        let atelier = tempfile::tempdir().expect("répertoire temporaire");
+        let coffre = atelier.path().join("coffre");
+        let source = atelier.path().join("source.bin");
+        std::fs::write(&source, &contenu).expect("écrivable");
+
+        let destination = VaultPath::from_components(composants).expect("chemin valide");
+        {
+            let mut vault =
+                Vault::create(&coffre, passphrase(), params()).expect("vault créable");
+            vault
+                .add_file(&source, &destination, AddMode::Copy, OnConflict::Fail)
+                .expect("ajoutable");
+        }
+
+        // Le vault est refermé puis rouvert : les octets ont fait l'aller-retour
+        // par l'index chiffré sur le disque.
+        let vault = Vault::open(&coffre)
+            .expect("ouvrable")
+            .unlock(passphrase())
+            .expect("déverrouillable");
+
+        let entree = vault.stat(&destination).expect("présente");
+        prop_assert_eq!(&entree.path, &destination);
+        prop_assert_eq!(entree.size, Some(contenu.len() as u64));
+
+        let listees: Vec<VaultPath> = vault.list(None).into_iter().map(|e| e.path).collect();
+        prop_assert!(listees.contains(&destination));
     }
 }
