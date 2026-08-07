@@ -1,0 +1,65 @@
+# Interdiction des dépendances réseau — T009, décision D-012
+#
+# Le principe III interdit toute connexion sortante. Une règle qu'aucun
+# mécanisme ne vérifie finit par être enfreinte par une dépendance transitive :
+# c'est ce fichier qui rend SC-005 mesurable plutôt que déclaratif.
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Les dépendances internes à l'espace de travail (vault-cli → vault-core) sont
+# déclarées par chemin, donc sans version : cargo-deny les compte comme des
+# jokers. Ce n'est pas le risque que « wildcards » vise, qui est de laisser une
+# dépendance du registre flotter sur n'importe quelle version.
+allow-wildcard-paths = true
+
+# Aucun de ces crates ne doit apparaître dans le graphe de dépendances, même
+# par transitivité. Un ajout ici doit toujours être accompagné de sa raison.
+deny = [
+    { crate = "reqwest", reason = "client HTTP — le principe III interdit toute connexion sortante" },
+    { crate = "hyper", reason = "pile HTTP" },
+    { crate = "h2", reason = "pile HTTP/2" },
+    { crate = "curl", reason = "client réseau" },
+    { crate = "curl-sys", reason = "client réseau" },
+    { crate = "ureq", reason = "client HTTP" },
+    { crate = "isahc", reason = "client HTTP" },
+    { crate = "native-tls", reason = "TLS — sans réseau, aucune raison d'être" },
+    { crate = "rustls", reason = "TLS — sans réseau, aucune raison d'être" },
+    { crate = "openssl", reason = "TLS, et cryptographie hors du périmètre audité du principe II" },
+    { crate = "openssl-sys", reason = "TLS" },
+    { crate = "tokio", reason = "exécuteur asynchrone orienté réseau — non nécessaire à une application locale" },
+    { crate = "async-std", reason = "exécuteur asynchrone orienté réseau" },
+    { crate = "socket2", reason = "sockets" },
+    { crate = "mio", reason = "entrées-sorties réseau" },
+]
+
+[licenses]
+# Projet open source : on refuse silencieusement toute licence non listée.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+]
+
+[licenses.private]
+# Cette vérification sert à contrôler la licence des dépendances tierces. Nos
+# propres crates ne sont pas publiés (publish = false) et leur licence relève
+# du fichier LICENSE à la racine, pas de cargo-deny.
+ignore = true
+
+[advisories]
+# Une vulnérabilité connue dans une dépendance fait échouer la porte.
+# Attention : cette vérification a besoin du réseau pour cloner la base RustSec.
+# En local elle passe par `./scripts/dev.sh deny` ; en intégration continue,
+# l'exécuteur dispose du réseau.
+yanked = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
