@@ -22,8 +22,16 @@
 //! marqués « à fermer sur exec » — mais pas avant.
 //!
 //! Le binaire `vault` ne se duplique jamais, et n'est donc pas concerné. La
-//! remarque vaut pour un appelant tiers, et la suite de tests l'a rencontrée
-//! pour de bon : voir l'en-tête de `tests/rekey_interruption.rs`.
+//! remarque vaut pour un appelant tiers — et pour la suite de tests, qui l'a
+//! rencontrée deux fois pour de bon.
+//!
+//! La règle qui en découle, appliquée partout où un binaire de test lance des
+//! processus : **aucune duplication ne doit avoir lieu pendant qu'un verrou est
+//! tenu.** Elle se traduit soit par l'isolement du test dans son propre binaire
+//! (`tests/rekey_interruption.rs`), soit par la sérialisation des tests du
+//! binaire (`tests/persistence.rs`, `vault-cli/tests/cli.rs`). Le symptôme,
+//! quand elle est violée, est déroutant : un `AlreadyInUse` sur un vault que le
+//! test venait de refermer et qu'aucun autre ne touche.
 
 use std::fs::{File, OpenOptions};
 use std::path::Path;

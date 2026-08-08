@@ -12,6 +12,45 @@ use assert_cmd::Command;
 
 const PASSPHRASE: &str = "une passphrase bien assez longue";
 
+/// Sérialise les tests de ce binaire. **Chaque test le prend en première
+/// ligne.**
+///
+/// Ce n'est pas une précaution de confort, et le supprimer réintroduirait un
+/// échec intermittent que l'intégration continue a réellement produit.
+///
+/// Un verrou `flock` appartient à la **description de fichier ouverte**, et
+/// `fork` la partage. Or ce fichier ne fait que deux choses : créer des vaults —
+/// donc prendre des verrous — et lancer le binaire `vault`, c'est-à-dire
+/// dupliquer le processus. Quand une duplication tombe pendant qu'un autre fil
+/// détient un verrou, l'enfant en hérite jusqu'à son `exec` : les descripteurs
+/// sont bien marqués « à fermer sur exec », mais la fenêtre entre les deux est
+/// réelle et la charge de la machine l'élargit.
+///
+/// Le vault que le fil victime vient de refermer paraît alors **encore ouvert**,
+/// et le test échoue en `AlreadyInUse` sur un vault qui n'a rien à voir avec
+/// celui que l'enfant visait. C'est exactement ce qui s'est produit sur un
+/// exécuteur `ubuntu-latest`, sur `un_vault_deja_ouvert_sort_en_code_4`, sans
+/// jamais se reproduire en local.
+///
+/// Sérialiser supprime la classe entière plutôt que le cas observé : aucune
+/// duplication ne peut plus avoir lieu pendant qu'un verrou est tenu. Ces dix
+/// tests s'exécutent en un dixième de seconde, le coût est nul.
+///
+/// La propriété elle-même est décrite dans le module `fs::lock` de
+/// `vault-core`. Elle ne concerne pas le binaire `vault`, qui ne se duplique
+/// jamais.
+static VERROU_DE_SUITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Prend le verrou de série pour la durée du test.
+///
+/// L'empoisonnement est ignoré : un test voisin qui a paniqué ne doit pas faire
+/// échouer les suivants pour une raison sans rapport avec ce qu'ils vérifient.
+fn en_serie() -> std::sync::MutexGuard<'static, ()> {
+    VERROU_DE_SUITE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn vault() -> Command {
     Command::cargo_bin("vault").expect("le binaire vault doit être construit")
 }
@@ -39,6 +78,7 @@ fn en_texte(chemin: &Path) -> &str {
 /// Code 0 : une commande qui ne demande rien aboutit.
 #[test]
 fn l_aide_sort_en_succes() {
+    let _serie = en_serie();
     vault().arg("--help").assert().success();
     vault().arg("--version").assert().success();
 }
@@ -46,6 +86,7 @@ fn l_aide_sort_en_succes() {
 /// Code 2 : arguments invalides.
 #[test]
 fn un_usage_invalide_sort_en_code_2() {
+    let _serie = en_serie();
     vault().assert().code(2);
     vault().arg("commande-inconnue").assert().code(2);
     vault().args(["add"]).assert().code(2);
@@ -65,6 +106,7 @@ fn un_usage_invalide_sort_en_code_2() {
 /// échoue en code 2 plutôt que de supposer une réponse.
 #[test]
 fn sans_terminal_une_saisie_exigee_sort_en_code_2() {
+    let _serie = en_serie();
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
 
     vault()
@@ -81,6 +123,7 @@ fn sans_terminal_une_saisie_exigee_sort_en_code_2() {
 /// ce cas est atteignable sans terminal.
 #[test]
 fn un_vault_introuvable_sort_en_code_5() {
+    let _serie = en_serie();
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
 
     vault()
@@ -102,6 +145,7 @@ fn un_vault_introuvable_sort_en_code_5() {
 /// supposer une réponse.
 #[test]
 fn l_espace_insuffisant_n_est_pas_atteignable_sans_terminal() {
+    let _serie = en_serie();
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
 
     vault()
@@ -121,6 +165,7 @@ fn l_espace_insuffisant_n_est_pas_atteignable_sans_terminal() {
 /// aucune saisie (CLI-018). C'est la seule commande dans ce cas.
 #[test]
 fn l_information_publique_s_obtient_sans_terminal() {
+    let _serie = en_serie();
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
     let coffre = coffre_neuf(atelier.path());
 
@@ -140,6 +185,7 @@ fn l_information_publique_s_obtient_sans_terminal() {
 /// pouvait pas aboutir.
 #[test]
 fn un_vault_deja_ouvert_sort_en_code_4() {
+    let _serie = en_serie();
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
     let coffre = coffre_neuf(atelier.path());
 
@@ -168,6 +214,7 @@ fn un_vault_deja_ouvert_sort_en_code_4() {
 /// par le format. Le refus intervient au décodage, avant toute passphrase.
 #[test]
 fn une_version_de_format_inconnue_sort_en_code_7() {
+    let _serie = en_serie();
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
     let coffre = coffre_neuf(atelier.path());
     let en_tete = coffre.join("header");
@@ -207,6 +254,7 @@ fn une_version_de_format_inconnue_sort_en_code_7() {
 /// console scriptée.
 #[test]
 fn le_code_3_n_est_pas_atteignable_sans_terminal() {
+    let _serie = en_serie();
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
     let coffre = coffre_neuf(atelier.path());
 
@@ -258,6 +306,7 @@ fn le_code_3_n_est_pas_atteignable_sans_terminal() {
 /// les commandes, l'aide générale comprise.
 #[test]
 fn aucune_option_n_accepte_la_passphrase() {
+    let _serie = en_serie();
     let aide_de = |arguments: &[&str]| {
         let sortie = vault()
             .args(arguments)

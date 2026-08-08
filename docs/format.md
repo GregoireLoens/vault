@@ -329,10 +329,30 @@ paliers. Les octets de remplissage sont tirés aléatoirement.
 Le surcoût de stockage reste sous 10 %, tandis qu'un observateur du vault verrouillé n'apprend
 qu'une **fourchette** de taille, et non la taille exacte.
 
-### 6.4 Bornes
+### 6.4 Dates sur le système de fichiers hôte
+
+La date de modification que l'hôte pose sur un fichier de blob est ramenée à **l'époque Unix**,
+au moment de l'écriture et avant que le blob n'apparaisse dans `objects/`.
+
+Le remplissage cache la taille, l'identifiant aléatoire cache le nom — mais la date, laissée à
+l'hôte, trahirait **l'ordre et le rythme des ajouts**. Trier `objects/` par date reconstituerait
+la chronologie du vault : ce qui est arrivé en premier, ce qui a suivi des mois plus tard,
+lesquels sont arrivés ensemble. Rien de cela n'est du contenu, et tout cela en dit long.
+
+L'époque Unix est choisie parce qu'elle est manifestement conventionnelle : une date plausible
+laisserait croire à une information, alors que celle-ci se lit pour ce qu'elle est — une absence
+de date. La date d'**accès** n'est pas normalisée : le système la remet à jour à chaque lecture,
+si bien que la fixer ne tiendrait pas.
+
+Une implémentation tierce qui se contenterait de lire un vault n'a rien à faire de cette règle.
+Une implémentation qui **écrit** doit l'appliquer.
+
+### 6.5 Bornes
 
 La taille maximale du contenu d'un fichier est de **4 000 000 000 octets**. Au-delà, l'ajout est
 refusé explicitement, avant toute écriture.
+
+Ce n'est pas 4 GiB : 4 294 967 296 octets dépassent la limite et sont refusés.
 
 ---
 
@@ -377,8 +397,11 @@ répertoire d'un vault **verrouillé**, sans la passphrase, apprend :
 |---|---|---|
 | Le nombre de blobs | Le nombre approximatif de fichiers stockés | Aucune dans cette version |
 | La taille de chaque blob | Une fourchette large de 10 %, pas la taille exacte | Remplissage par paliers (§6.3) |
-| Les dates du système de fichiers | Les dates de dernière modification du vault, pas celles des fichiers | Les dates d'origine vivent dans l'index chiffré |
+| La date de dernière modification du vault | Quand il a servi pour la dernière fois, par `index` et `header` | Aucune : réécrire l'index est ce qui rend le vault utilisable |
 | Les paramètres de dérivation | Le coût d'une attaque par force brute | Publics par conception |
+
+Les dates des **blobs**, elles, n'apprennent rien : elles sont toutes ramenées à l'époque Unix
+(§6.4), si bien que `objects/` ne trahit ni l'ordre ni le rythme des ajouts.
 
 Il n'apprend **ni** les noms de fichiers, **ni** l'arborescence, **ni** les tailles exactes, **ni**
 le contenu, **ni** si deux fichiers du vault sont identiques.

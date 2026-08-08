@@ -23,6 +23,32 @@ use std::path::{Path, PathBuf};
 
 use vault_core::{AddMode, EntryKind, KdfParams, OnConflict, SecretString, Vault, VaultPath};
 
+/// Sérialise les tests de ce binaire. **Chaque test qui lance un processus
+/// auxiliaire le prend en première ligne.**
+///
+/// Un verrou `flock` appartient à la description de fichier ouverte, et `fork`
+/// la partage : dupliquer le processus pendant qu'un autre fil détient le
+/// verrou d'un vault en lègue une copie à l'enfant jusqu'à son `exec`. Le vault
+/// qu'un fil vient de refermer paraît alors encore ouvert, et un test échoue en
+/// `AlreadyInUse` sur un vault sans rapport avec celui que l'enfant visait.
+///
+/// Ce fichier réunit précisément les deux ingrédients : `relire` déverrouille
+/// dans le processus de test, et trois tests lancent des processus. Sérialiser
+/// supprime la classe entière. Le module `fs::lock` décrit la propriété ; la
+/// même précaution vaut dans `vault-cli/tests/cli.rs`, où elle a été prise
+/// après un échec réel de l'intégration continue.
+static VERROU_DE_SUITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Prend le verrou de série pour la durée du test.
+///
+/// L'empoisonnement est ignoré : un test voisin qui a paniqué ne doit pas faire
+/// échouer les suivants pour une raison sans rapport avec ce qu'ils vérifient.
+fn en_serie() -> std::sync::MutexGuard<'static, ()> {
+    VERROU_DE_SUITE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Rôle du processus auxiliaire, transmis par l'environnement.
 const ROLE: &str = "VAULT_TEST_PERSISTANCE_ROLE";
 /// Répertoire de travail, transmis par l'environnement.
@@ -145,6 +171,7 @@ fn auxiliaire(role: &str, atelier: &Path) -> bool {
 /// Le contenu survit à la fin du processus qui l'a déposé.
 #[test]
 fn le_contenu_survit_a_la_fin_du_processus() {
+    let _serie = en_serie();
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
 
     assert!(auxiliaire("creer", atelier.path()), "création");
@@ -160,6 +187,7 @@ fn le_contenu_survit_a_la_fin_du_processus() {
 /// session ; le second doit tout de même pouvoir ouvrir.
 #[test]
 fn le_verrou_ne_survit_pas_au_processus_qui_le_tenait() {
+    let _serie = en_serie();
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
     assert!(auxiliaire("creer", atelier.path()), "création");
 
@@ -177,6 +205,7 @@ fn le_verrou_ne_survit_pas_au_processus_qui_le_tenait() {
 /// laissé en clair à côté, et aucun résidu de session ne subsiste.
 #[test]
 fn un_vault_referme_ne_contient_que_le_format() {
+    let _serie = en_serie();
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
     assert!(auxiliaire("creer", atelier.path()), "création");
 

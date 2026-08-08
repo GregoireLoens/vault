@@ -267,6 +267,11 @@ impl UnlockedVault {
         let ecrit = stream::STREAM_NONCE_LEN as u64 + stream::ciphertext_len(taille);
         let rempli = blob::blob_size(taille);
         temporaire.write_all(&blob::padding(ecrit, rempli))?;
+
+        // VR-B5 : la date est posée sur le temporaire, donc avant que le blob
+        // n'apparaisse dans `objects/`. Il n'y existe à aucun moment avec la
+        // date que l'hôte lui aurait donnée.
+        temporaire.as_file().set_modified(blob::NORMALIZED_MTIME)?;
         atomic::commit(temporaire, &destination)?;
 
         Ok(IndexEntry {
@@ -480,6 +485,38 @@ mod tests {
         assert_eq!(entree.size, Some(7));
         assert_eq!(atelier.vault.list(None).len(), 1);
         assert!(source.exists(), "le mode copie conserve l'original");
+    }
+
+    /// VR-B5 : les blobs portent tous la même date, quel que soit le moment de
+    /// leur ajout. Sans cela, trier `objects/` par date reconstituerait la
+    /// chronologie du vault.
+    #[test]
+    fn les_blobs_ne_trahissent_pas_la_chronologie_des_ajouts() {
+        let mut atelier = atelier();
+        let objets = atelier.vault.path().join(crate::ops::OBJECTS_DIR);
+
+        for nom in ["premier.txt", "second.txt", "troisieme.txt"] {
+            let source = fichier(&atelier, nom, nom.as_bytes());
+            atelier
+                .vault
+                .add_file(&source, &chemin(nom), AddMode::Copy, OnConflict::Fail)
+                .expect("ajoutable");
+        }
+
+        let dates: Vec<std::time::SystemTime> = std::fs::read_dir(&objets)
+            .expect("listable")
+            .filter_map(std::result::Result::ok)
+            .map(|entree| {
+                entree
+                    .metadata()
+                    .expect("lisible")
+                    .modified()
+                    .expect("date disponible")
+            })
+            .collect();
+
+        assert_eq!(dates.len(), 3);
+        assert_eq!(dates, vec![blob::NORMALIZED_MTIME; 3], "{dates:?}");
     }
 
     /// FR-022, FR-023 : la garde de taille, vérifiée sur ses bornes exactes.
