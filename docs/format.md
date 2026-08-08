@@ -1,6 +1,6 @@
 # Format de vault — version 1
 
-**Statut** : normatif. **Version de format** : 1. **Dernière révision** : 2026-08-06.
+**Statut** : normatif. **Version de format** : 1. **Dernière révision** : 2026-08-08.
 
 Ce document décrit intégralement le format d'un vault sur disque. Le principe IV de la
 constitution du projet en fixe l'objectif : **un vault doit rester déchiffrable dans dix ans, à
@@ -11,10 +11,14 @@ fichier `header`, en clair — les identifiants d'algorithmes, le sel et les co�
 inclus. Une implémentation qui coderait ces valeurs en dur serait fausse : un vault produit avec
 d'autres paramètres doit rester lisible.
 
-> **Nota sur l'état d'avancement.** Ce document décrit le format complet de la version 1, tel
-> qu'il est figé par le code du format et de la cryptographie (phase 2). Les opérations de haut
-> niveau — ajout, extraction, suppression — arrivent en phase 3 et n'ont pas d'incidence sur la
-> disposition décrite ici.
+> **Le format 1 est figé.** Depuis `v1.0.0`, cette disposition est tenue pour stable : les
+> versions suivantes de vault sauront la lire, et un changement qui casserait cette lecture serait
+> une version majeure, accompagnée d'un chemin de migration documenté.
+>
+> Un vault de référence produit par `v0.3.0` est conservé dans
+> `crates/vault-core/tests/fixtures/v1/` et relu par chaque exécution de la suite. Il ne sera
+> jamais régénéré : c'est ce qui fait de l'engagement ci-dessus une vérification plutôt qu'une
+> déclaration.
 
 ---
 
