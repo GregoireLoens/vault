@@ -10,6 +10,20 @@
 //! définitivement « occupé » par un processus mort.
 //!
 //! VR-S4 : le verrou est tenu pendant toute la session déverrouillée.
+//!
+//! # Une conséquence à connaître si l'on duplique le processus
+//!
+//! Un verrou `flock` appartient à la **description de fichier ouverte**, et
+//! `fork` la partage entre les deux processus. Une application qui embarquerait
+//! cette bibliothèque et se dupliquerait pendant qu'un de ses fils d'exécution
+//! détient le verrou d'un vault en léguerait donc une copie à l'enfant : le
+//! verrou resterait pris jusqu'à ce que l'enfant ferme le descripteur, ce que
+//! son `exec` fait — les descripteurs ouverts par la bibliothèque standard sont
+//! marqués « à fermer sur exec » — mais pas avant.
+//!
+//! Le binaire `vault` ne se duplique jamais, et n'est donc pas concerné. La
+//! remarque vaut pour un appelant tiers, et la suite de tests l'a rencontrée
+//! pour de bon : voir l'en-tête de `tests/rekey_interruption.rs`.
 
 use std::fs::{File, OpenOptions};
 use std::path::Path;
