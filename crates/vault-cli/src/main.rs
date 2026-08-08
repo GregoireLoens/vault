@@ -95,6 +95,15 @@ enum Commande {
         #[arg(long)]
         long: bool,
     },
+    /// Supprime des entrées. Définitif : ni corbeille, ni annulation.
+    Rm {
+        /// Entrées à supprimer.
+        #[arg(required = true)]
+        chemins: Vec<PathBuf>,
+        /// Emporte la descendance d'un dossier.
+        #[arg(long, short = 'r')]
+        recursive: bool,
+    },
     /// Affiche les paramètres publics du vault, sans le déverrouiller.
     Info,
     /// Extrait vers le disque, en clair.
@@ -172,6 +181,13 @@ fn executer(cli: &Cli, console: &mut dyn Console) -> CliResult<()> {
             &cmd::ls::Options {
                 chemin: chemin.clone(),
                 long: *long,
+            },
+        ),
+        Commande::Rm { chemins, recursive } => cmd::rm::executer(
+            &mut contexte,
+            &cmd::rm::Options {
+                chemins: chemins.clone(),
+                recursive: *recursive,
             },
         ),
         Commande::Info => cmd::info::executer(&mut contexte),
@@ -348,9 +364,9 @@ mod tests {
         assert_eq!(verdicts, vec![true; verdicts.len()]);
     }
 
-    /// Le parcours complet des cinq commandes, sur un vault jetable.
+    /// Le parcours complet des six commandes, sur un vault jetable.
     #[test]
-    fn les_cinq_commandes_s_enchainent() {
+    fn les_six_commandes_s_enchainent() {
         let atelier = tempfile::tempdir().expect("répertoire temporaire");
         let coffre = atelier.path().join("coffre");
         let source = atelier.path().join("note.txt");
@@ -405,5 +421,27 @@ mod tests {
             std::fs::read(sortie.join("note.txt")).expect("lisible"),
             b"contenu"
         );
+
+        let suppression = analyser(&[
+            "rm",
+            "note.txt",
+            "--yes",
+            "--vault",
+            coffre.to_str().expect("UTF-8"),
+        ]);
+        let mut console = FakeConsole::new(&[PASSPHRASE], &[]);
+        executer(&suppression, &mut console).expect("supprimable");
+        assert!(console.tout_affiche().contains("1 entrée(s) supprimée(s)"));
+
+        // Le vault est vide, et la copie extraite plus tôt est intacte.
+        let listage = analyser(&["ls", "--vault", coffre.to_str().expect("UTF-8")]);
+        let mut console = FakeConsole::new(&[PASSPHRASE], &[]);
+        executer(&listage, &mut console).expect("listable");
+        assert!(
+            console
+                .tout_affiche()
+                .contains("0 dossier(s), 0 fichier(s)")
+        );
+        assert!(sortie.join("note.txt").is_file());
     }
 }

@@ -118,10 +118,6 @@ impl Index {
         }
     }
 
-    // Dérogation datée : la suppression relève de la phase 5 (T058 et
-    // suivantes). Elle est écrite et testée ici parce qu'elle fait partie du
-    // format ; son appelant arrive avec cette tâche.
-    #[allow(dead_code)]
     /// Retire une entrée et, si `recursive`, toute sa descendance.
     ///
     /// Renvoie les entrées retirées : l'appelant délie leurs blobs **après**

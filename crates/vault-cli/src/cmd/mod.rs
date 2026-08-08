@@ -10,6 +10,7 @@ pub mod create;
 pub mod extract;
 pub mod info;
 pub mod ls;
+pub mod rm;
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};

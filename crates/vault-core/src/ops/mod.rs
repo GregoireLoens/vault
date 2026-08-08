@@ -13,13 +13,16 @@ pub(crate) mod add;
 pub(crate) mod create;
 pub(crate) mod extract;
 pub(crate) mod list;
+pub(crate) mod remove;
 pub(crate) mod unlock;
 
 use std::path::{Path, PathBuf};
 
+use crate::UnlockedVault;
 use crate::error::{Error, Result};
 use crate::format::blob::BlobId;
 use crate::format::path::VaultPath;
+use crate::fs::atomic;
 
 /// Nom du fichier d'en-tête, dans le répertoire du vault.
 pub(crate) const HEADER_FILE: &str = "header";
@@ -33,6 +36,34 @@ pub(crate) const OBJECTS_DIR: &str = "objects";
 /// Emplacement d'un blob dans un vault.
 pub(crate) fn blob_path(vault_dir: &Path, blob_id: &BlobId) -> PathBuf {
     vault_dir.join(OBJECTS_DIR).join(blob_id.to_hex())
+}
+
+/// Écriture de l'index et déliaison des blobs — la plomberie que l'ajout et la
+/// suppression partagent.
+///
+/// Elle vit ici plutôt que dans l'une des deux opérations parce que **l'ordre
+/// dans lequel ces deux gestes s'enchaînent est la garantie elle-même**
+/// (D-008, C-013, C-020). L'ajout écrit les blobs puis l'index ; la suppression
+/// écrit l'index puis délie les blobs. Dans les deux cas l'index est le point
+/// d'engagement, et une interruption ne laisse jamais qu'un déchet inerte.
+impl UnlockedVault {
+    /// Réécrit l'index sur le disque, intégralement et atomiquement (VR-I5).
+    pub(crate) fn commit_index(&self) -> Result<()> {
+        atomic::write(
+            &self.path.join(INDEX_FILE),
+            &self.index.encrypt(&self.master_key)?,
+        )
+    }
+
+    /// Retire des blobs du disque.
+    ///
+    /// Les échecs sont ignorés : un blob qui résiste reste un orphelin, donc un
+    /// déchet que le déverrouillage suivant balaiera, et jamais une incohérence.
+    pub(crate) fn unlink_blobs(&self, blobs: &[BlobId]) {
+        for blob_id in blobs {
+            drop(std::fs::remove_file(blob_path(&self.path, blob_id)));
+        }
+    }
 }
 
 /// Retire de `path` les `strip.depth()` premiers composants.

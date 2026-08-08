@@ -27,8 +27,8 @@ Ce qui fonctionne aujourd'hui :
 | ✅ `vault add` | Y déposer fichiers et dossiers |
 | ✅ `vault ls` | Lister le contenu |
 | ✅ `vault extract` | Ressortir le contenu, octet pour octet |
+| ✅ `vault rm` | Retirer une entrée, définitivement |
 | ✅ `vault info` | Paramètres publics du vault, sans le déverrouiller |
-| ⏳ `vault rm` | Supprimer une entrée — pas encore implémenté |
 | ⏳ `vault passwd` | Changer la passphrase — pas encore implémenté |
 | ⏳ Export et transfert entre postes | Prévus, pas encore commencés |
 
@@ -159,7 +159,17 @@ impots-2025.pdf  2.4 Mo
 
 $ vault extract impots-2025.pdf --to ~/sortie --vault ~/mon-vault
 1 entrée(s) extraite(s) vers /home/vous/sortie.
+
+$ vault rm impots-2025.pdf --vault ~/mon-vault
+Passphrase :
+La suppression est définitive : il n'existe ni corbeille, ni annulation, ni récupération.
+Supprimer 1 entrée(s) ? [o/N] : o
+1 entrée(s) supprimée(s).
 ```
+
+`--recursive` est requis pour un dossier non vide : un dossier ne part pas par mégarde. La
+suppression réécrit l'index **d'abord** et ne délie les blobs qu'ensuite — une interruption
+laisse ainsi des déchets inertes, jamais un index désignant un contenu absent.
 
 `vault info` est la seule commande qui ne demande **rien** : tout ce qu'elle affiche vient de
 l'en-tête, qui est en clair par conception. Elle ne dit donc ni ce que le vault contient, ni
