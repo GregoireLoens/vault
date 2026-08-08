@@ -11,8 +11,13 @@ pleinement fonctionnel si tous les serveurs du monde disparaissent.
 
 ## ⚠ État du projet — à lire avant de confier quoi que ce soit
 
-**vault est en développement, n'a fait l'objet d'aucun audit externe, et n'a pas encore de version
-1.0. Ne lui confiez pas de données dont vous n'avez pas de copie ailleurs.**
+**vault n'a fait l'objet d'aucun audit externe. Ne lui confiez pas de données dont vous n'avez pas
+de copie ailleurs.**
+
+La version `1.0.0` dit que le périmètre annoncé est complet et que **le format sur disque est tenu
+pour stable** — vos vaults resteront lisibles par les versions suivantes. Elle ne dit rien de
+plus, et surtout pas qu'un tiers a relu cette cryptographie. Ce sont deux garanties différentes,
+et la seconde manque encore.
 
 Ce n'est pas une formule de prudence : la perte de la passphrase est **définitive et par
 conception**. Il n'existe ni question de secours, ni réinitialisation, ni clé de secours, ni
@@ -254,6 +259,10 @@ Autrement dit : passer de `v0.3.0` à `v0.4.0` ne rend jamais vos vaults illisib
 | Tag | Contenu |
 |---|---|
 | `v0.1.0` | Format, cryptographie, et user story 1 — créer, ajouter, lister, extraire |
+| `v0.2.0` | Fermer un vault et le rouvrir — détection d'altération, `vault info` |
+| `v0.3.0` | Retirer des fichiers — `vault rm` |
+| `v0.4.0` | Changer la passphrase — `vault passwd` |
+| `v1.0.0` | Périmètre complet, format 1 tenu pour stable |
 
 ---
 
