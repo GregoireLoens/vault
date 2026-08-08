@@ -28,7 +28,7 @@ use crate::format::blob::{self, BlobId, MAX_FILE_SIZE};
 use crate::format::index::{EntryKind, Index, IndexEntry};
 use crate::format::path::VaultPath;
 use crate::fs::{atomic, shred};
-use crate::ops::{INDEX_FILE, blob_path};
+use crate::ops::blob_path;
 use crate::{AddMode, Entry, OnConflict, UnlockedVault};
 
 /// Nombre maximal de renommages tentés pour éviter une collision.
@@ -331,13 +331,6 @@ impl UnlockedVault {
     }
 
     /// Réécrit l'index intégralement et le remplace atomiquement (VR-I5).
-    fn commit_index(&self) -> Result<()> {
-        atomic::write(
-            &self.path.join(INDEX_FILE),
-            &self.index.encrypt(&self.master_key)?,
-        )
-    }
-
     /// Restaure l'index en mémoire et retire les blobs devenus inutiles.
     ///
     /// L'échec de la suppression d'un blob est ignoré : il ne resterait alors
@@ -346,12 +339,6 @@ impl UnlockedVault {
     fn rollback(&mut self, instantane: Index, ecrits: &[BlobId]) {
         self.index = instantane;
         self.unlink_blobs(ecrits);
-    }
-
-    fn unlink_blobs(&self, blobs: &[BlobId]) {
-        for blob_id in blobs {
-            drop(std::fs::remove_file(blob_path(&self.path, blob_id)));
-        }
     }
 }
 

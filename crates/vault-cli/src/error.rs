@@ -62,6 +62,14 @@ impl CliError {
             Self::Core(Error::AlreadyInUse) => {
                 "Ce vault est déjà ouvert par un autre processus.".to_owned()
             }
+            // CLI-015 : dire que le dossier n'est pas vide n'apprend pas quoi
+            // faire. Le nombre de descendants reste tu (C-025) : c'est du
+            // contenu du vault.
+            Self::Core(Error::DirectoryNotEmpty) => {
+                "Ce dossier n'est pas vide. Ajoutez --recursive pour le supprimer avec tout \
+ce qu'il contient."
+                    .to_owned()
+            }
             Self::Core(Error::UnrepresentableName) => {
                 "Ce nom de fichier n'est pas représentable sur ce système de fichiers. \
 L'entrée reste intacte dans le vault : elle s'extraira sur un système dont les \
@@ -137,6 +145,17 @@ mod tests {
         assert_eq!(io.code(), 1);
         assert!(io.message().contains("disque"));
         assert_eq!(CliError::from(Error::NotFound).code(), 5);
+    }
+
+    /// CLI-015 : le message dit quoi faire, et ne dit **pas** combien
+    /// d'entrées le dossier contient — ce serait renseigner sur le contenu du
+    /// vault dans un message d'erreur (C-025, CLI-021).
+    #[test]
+    fn le_dossier_peuple_indique_la_solution_sans_dire_le_contenu() {
+        let message = CliError::Core(Error::DirectoryNotEmpty).message();
+        assert!(message.contains("--recursive"), "{message}");
+        assert!(!message.chars().any(|c| c.is_ascii_digit()), "{message}");
+        assert_eq!(CliError::Core(Error::DirectoryNotEmpty).code(), 1);
     }
 
     /// CLI-019 : le message du code 3 ne dit pas laquelle des deux causes s'est

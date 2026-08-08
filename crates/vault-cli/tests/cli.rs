@@ -49,6 +49,7 @@ fn un_usage_invalide_sort_en_code_2() {
     vault().assert().code(2);
     vault().arg("commande-inconnue").assert().code(2);
     vault().args(["add"]).assert().code(2);
+    vault().args(["rm"]).assert().code(2);
     vault().args(["extract", "x"]).assert().code(2);
     vault()
         .args(["add", "--move", "--copy", "fichier"])
@@ -257,7 +258,7 @@ fn aucune_option_n_accepte_la_passphrase() {
     let aide = String::from_utf8(aide).expect("UTF-8");
     assert!(!aide.contains("passphrase"), "aide : {aide}");
 
-    for commande in ["create", "add", "ls", "extract", "info"] {
+    for commande in ["create", "add", "ls", "extract", "info", "rm"] {
         let aide = vault()
             .args([commande, "--help"])
             .assert()
