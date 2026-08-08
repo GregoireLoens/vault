@@ -10,6 +10,72 @@ contraire.
 
 ---
 
+## Ce que ces vérifications établissent, et ce qu'elles n'établissent pas
+
+À lire avant tout le reste, parce que la confusion est facile et coûteuse.
+
+**Ce qu'elles établissent :**
+
+- que le format se **décrit** fidèlement — une implémentation écrite depuis le seul
+  `docs/format.md` restitue le contenu d'un vault de référence octet pour octet ;
+- que le logiciel **refuse explicitement** ce qu'il ne comprend pas, y compris des octets que
+  personne n'a choisis ;
+- qu'une livraison peut être **rattachée à son auteur** et reconstruite par un tiers.
+
+**Ce qu'elles n'établissent pas** — et aucune accumulation de tests verts n'y changera rien :
+
+- **Pas la conception cryptographique.** Un déchiffreur indépendant qui restitue le contenu prouve
+  que le document décrit fidèlement ce que le code fait. Il ne dit rien de la question de savoir
+  si ce que le code fait est une bonne idée. Les paramètres de dérivation, l'absence d'engagement
+  de clé, la construction du nonce : tout cela reste à relire par quelqu'un d'autre.
+- **Pas l'absence de défaut.** Une exploration qui ne trouve rien n'établit pas qu'il n'y a rien à
+  trouver. L'étendue de l'effort consenti est consignée plus bas pour que le lecteur en juge
+  lui-même, plutôt que de conclure du silence à la sûreté.
+- **Pas une relecture par un tiers.** Ces vérifications sont écrites par l'auteur du logiciel.
+  Elles réduisent le périmètre et le coût d'un audit externe ; elles ne s'y substituent pas.
+
+Ce paragraphe est écrit **avant** les vérifications qu'il encadre, et non après. Rédigé une fois
+les tests au vert, il se serait transformé en excuse ; écrit d'avance, il fixe ce qu'on a le droit
+de conclure.
+
+---
+
+## Suffisance de la spécification de format — SC-001 à SC-003
+
+Un déchiffreur écrit depuis le seul `docs/format.md`, en Python et avec des primitives génériques,
+restitue le contenu du vault de référence **octet pour octet**. Il tourne à chaque exécution de la
+chaîne d'intégration (`./scripts/dev.sh verifier-format`).
+
+**Le document a tenu.** Aucune erreur ni omission n'a été trouvée dans `docs/format.md` : la
+chaîne complète — en-tête CBOR, Argon2id, contexte public à champs de largeur fixe,
+désenveloppement, index, dérivation BLAKE3, et surtout la **reconstruction de STREAM BE32 à partir
+de la primitive** — s'est écrite directement depuis le texte.
+
+Deux constats tout de même, et le second compte :
+
+- **Le défaut trouvé était dans le déchiffreur, pas dans le document.** `pathlib` refuse les
+  chemins en octets, alors que le format impose de les conserver bruts ; il a fallu passer par
+  `os.path`. C'est un défaut de l'outil de vérification, et il est consigné ici pour que personne
+  ne le compte comme une victoire du document.
+- **`crates/vault-core/tests/fixtures/README.md` était trop vague pour être exploitable.** Il
+  décrivait « un texte accentué, deux lignes », ce qui se lit bien mais **ne permet pas de
+  reconstituer le contenu**. Or c'est précisément ce dont un tiers a besoin. La table est
+  désormais définie à l'octet près, et le contenu attendu en est dérivé — et non de la sortie du
+  logiciel, ce qui reviendrait à croire le logiciel sur parole pour le vérifier.
+
+### La limite, qui doit être lue avec le résultat
+
+Le déchiffreur a été écrit par l'auteur du logiciel, au cours d'une session où le code Rust avait
+déjà été lu. **L'indépendance n'est donc pas celle d'un tiers** : là où le document aurait été
+muet, la connaissance préalable a pu combler le silence sans que rien ne le signale.
+
+Ce que ce résultat établit malgré tout, et qu'aucun test du logiciel ne pouvait établir : le
+document décrit une chaîne **complète et exacte**, reproductible avec d'autres bibliothèques, dans
+un autre langage. Ce qu'il n'établit pas : qu'un lecteur n'ayant jamais vu le code y parviendrait
+sans buter. Cela reste à faire faire par quelqu'un d'autre.
+
+---
+
 ## SC-010 — 4 Go sous 2 Go de mémoire
 
 Exécuté sous limite mémoire imposée par le noyau, `./scripts/dev.sh --mem 2g`, en profil

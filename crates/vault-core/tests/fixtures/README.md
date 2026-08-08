@@ -33,15 +33,24 @@ vault réel devrait employer : la référence est ouverte par chaque exécution 
 paramètres réalistes y ajouteraient une seconde à chaque fois pour ne rien prouver de plus. La
 passphrase est publique pour la même raison — ce vault ne protège rien.
 
-Contenu, tel que `compat.rs` le vérifie :
+Contenu, **défini exactement** — c'est cette définition, et non le logiciel, qui fait autorité :
 
-| Chemin | Contenu |
-|---|---|
-| `lisez-moi.txt` | texte accentué, 2 lignes |
-| `vide.bin` | 0 octet |
-| `photos/` | dossier |
-| `photos/été.jpg` | les 256 octets de `0x00` à `0xff` |
-| `photos/grand.bin` | 70 000 octets, `index % 251` — au-delà d'un morceau STREAM |
+| Chemin | Taille | Contenu |
+|---|---|---|
+| `lisez-moi.txt` | 67 o | `Vault de référence, format 1.\nCe fichier ne doit jamais changer.\n`, encodé en UTF-8 |
+| `vide.bin` | 0 o | vide |
+| `photos/` | — | dossier |
+| `photos/été.jpg` | 256 o | les octets de `0x00` à `0xff`, dans l'ordre |
+| `photos/grand.bin` | 70 000 o | l'octet d'indice `i` vaut `i modulo 251` — au-delà d'un morceau STREAM |
+
+Le nom `photos/été.jpg` s'écrit en UTF-8, forme **composée** : `été` y fait sept octets.
+
+> **Pourquoi cette table est précise à l'octet près.** Elle décrivait naguère « un texte accentué,
+> deux lignes », ce qui suffit à un lecteur mais **pas à reconstituer le contenu**. Or c'est
+> exactement ce qu'exige un tiers qui veut vérifier par lui-même, et ce dont
+> `verification/dechiffreur/attendu.json` est dérivé. Un contenu attendu qu'on ne pourrait
+> obtenir qu'en exécutant le logiciel ne prouverait plus rien : il faudrait croire le logiciel sur
+> parole pour vérifier le logiciel.
 
 Le fichier `.lock` n'y figure pas : il ne fait pas partie du format, et il est recréé à
 l'ouverture. `compat.rs` copie d'ailleurs la référence dans un répertoire temporaire avant de

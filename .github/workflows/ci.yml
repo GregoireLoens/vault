@@ -142,6 +142,35 @@ jobs:
             --ignore-filename-regex 'vault-cli/src/console/tty\.rs' \
             --fail-under-lines 100
 
+  format-spec:
+    # Le principe IV exige qu'un vault soit déchiffrable à partir de sa seule
+    # spécification, sans exécuter vault. Rien ne le vérifiait : `compat.rs`
+    # déchiffre le vault de référence avec le code qui l'a écrit, ce qui prouve
+    # la non-régression et non la suffisance du document.
+    #
+    # Cette porte fait tourner un déchiffreur écrit depuis le seul
+    # `docs/format.md`, dans un autre langage et avec d'autres bibliothèques.
+    # Un échec ici désigne une partie du document qui est fausse ou incomplète —
+    # et c'est le document qu'il faut corriger, jamais la référence.
+    name: Déchiffreur indépendant
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installer les bibliothèques de vérification
+        run: |
+          python3 -m venv /opt/verification
+          /opt/verification/bin/pip install --no-cache-dir --disable-pip-version-check \
+            -r verification/dechiffreur/requirements.txt
+      - name: Déchiffrer le vault de référence depuis la seule spécification
+        run: |
+          sortie=$(mktemp -d)
+          echo "vault fixture v1 passphrase de reference" \
+            | /opt/verification/bin/python verification/dechiffreur/dechiffrer.py \
+                crates/vault-core/tests/fixtures/v1 "$sortie"
+          /opt/verification/bin/python verification/dechiffreur/verifier.py \
+            verification/dechiffreur/attendu.json "$sortie"
+
   supply-chain:
     name: Dépendances
     runs-on: ubuntu-latest

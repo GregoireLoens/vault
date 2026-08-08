@@ -513,6 +513,64 @@ mod tests {
         assert!(header.unlock(&passphrase()).is_ok());
     }
 
+    /// Section 7 bis de `docs/format.md` : les valeurs **secrètes** de la
+    /// chaîne de dérivation qui y sont publiées.
+    ///
+    /// Elles ne traversent aucune interface publique — c'est délibéré — et ne
+    /// peuvent donc pas être vérifiées depuis `tests/vecteurs.rs`, qui couvre
+    /// tout le reste. Sans ce test, la moitié des vecteurs publiés vieillirait
+    /// sans que rien ne le signale.
+    #[test]
+    fn les_vecteurs_secrets_publies_sont_ceux_du_logiciel() {
+        fn hex(texte: &str) -> Vec<u8> {
+            (0..texte.len())
+                .step_by(2)
+                .map(|index| u8::from_str_radix(&texte[index..index + 2], 16).expect("hexadécimal"))
+                .collect()
+        }
+
+        let octets = std::fs::read("tests/fixtures/v1/header").expect("référence lisible");
+        let header = Header::decode(&octets).expect("décodable");
+        let publiee = SecretString::from("vault fixture v1 passphrase de reference".to_owned());
+
+        // Clé d'enveloppe (§4.1).
+        let enveloppe =
+            kdf::derive_wrapping_key(&publiee, &header.salt, header.kdf_params).expect("dérivable");
+        assert_eq!(
+            enveloppe.to_vec(),
+            hex("7bb28f039c531ddc0ee414e4fa5f1648e81060cb2a6da3a894a58f6582b5e15e"),
+            "clé d'enveloppe publiée"
+        );
+
+        // Contexte public (§4.2) — 65 octets, publiés in extenso.
+        assert_eq!(
+            header.public_context(),
+            hex(concat!(
+                "5641554c54464d54000000016172676f6e326964",
+                "bdfaa6979ddb4e6f23ce5c8615aaedcd",
+                "000000400000000100000001786368616368613230706f6c7931333035",
+            )),
+            "contexte public publié"
+        );
+
+        // Clé maîtresse (§4.2).
+        let maitresse = header.unlock(&publiee).expect("désenveloppable");
+        assert_eq!(
+            maitresse.expose().to_vec(),
+            hex("3b2930a56bd1030f685292e07ddcc985fa2aace1961583da49260db2d5905b41"),
+            "clé maîtresse publiée"
+        );
+
+        // Clé du blob de l'entrée témoin (§4.3).
+        let blob_id = hex("64a8f329ed76ed598354b07483b2dca8a2bd700eb09e08df17b3fac6d7b81d80");
+        let blob_id: [u8; 32] = blob_id.try_into().expect("32 octets");
+        assert_eq!(
+            maitresse.blob_key(&blob_id).to_vec(),
+            hex("24bd88c76e17e3bb676e183c8ce5369410168e186bb998e131d5e2bb7a0875f7"),
+            "clé de blob publiée"
+        );
+    }
+
     #[test]
     fn le_debug_de_l_en_tete_existe() {
         let (header, _) = en_tete();

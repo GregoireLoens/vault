@@ -1,0 +1,28 @@
+# Bibliothèques du déchiffreur indépendant — T002
+#
+# Versions figées, comme celles des outils Rust du Dockerfile : la chaîne locale
+# et celle de l'intégration continue doivent appliquer exactement les mêmes
+# règles, sinon une porte passe ici et échoue là.
+#
+# Les quatre premières sont les seules employées directement. Les trois
+# suivantes sont transitives, et figées pour la même raison.
+#
+# AUCUNE de ces bibliothèques n'implémente le format de vault. Ce sont des
+# primitives cryptographiques génériques, adossées à des implémentations de
+# référence — libsodium pour l'AEAD, la bibliothèque de référence Argon2, celle
+# de BLAKE3. C'est ce qui rend le déchiffreur indépendant : il ne partage rien
+# avec le logiciel, hormis les mathématiques.
+
+# XChaCha20-Poly1305 (libsodium)
+PyNaCl==1.6.2
+# Argon2id, sortie brute, version 0x13
+argon2-cffi==25.1.0
+# BLAKE3 en mode derive_key
+blake3==1.0.9
+# CBOR (RFC 8949)
+cbor2==6.1.4
+
+# Transitives
+argon2-cffi-bindings==25.1.0
+cffi==2.1.1
+pycparser==3.0

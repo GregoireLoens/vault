@@ -10,6 +10,7 @@
 #   ./scripts/dev.sh shell              shell interactif dans le conteneur
 #   ./scripts/dev.sh coverage           couverture, seuil bloquant à 100 %
 #   ./scripts/dev.sh deny               cargo deny — avec réseau (base RustSec)
+#   ./scripts/dev.sh verifier-format    déchiffreur indépendant sur la référence
 #   ./scripts/dev.sh <commande...>      exécute sans réseau
 #   ./scripts/dev.sh --net <cmd...>     exécute avec réseau (exceptionnel)
 #   ./scripts/dev.sh --mem 2g <cmd...>  exécute sous limite mémoire
@@ -66,6 +67,27 @@ case "$1" in
         set -- cargo llvm-cov --workspace --all-targets \
             --ignore-filename-regex 'vault-cli/src/console/tty\.rs' \
             --fail-under-lines 100 "$@"
+        ;;
+    verifier-format)
+        # Le principe IV exige qu'un vault soit déchiffrable à partir de sa
+        # seule spécification, sans exécuter vault. Cette porte l'éprouve : un
+        # déchiffreur écrit depuis le seul docs/format.md ouvre le vault de
+        # référence, et son résultat est comparé octet pour octet à un contenu
+        # attendu dérivé, lui aussi, de la documentation.
+        #
+        # Un échec ici désigne une partie du document qui est fausse ou
+        # incomplète. Voir verification/dechiffreur/README.md.
+        shift
+        set -- bash -c '
+            set -e
+            sortie=$(mktemp -d)
+            trap "rm -rf $sortie" EXIT
+            echo "vault fixture v1 passphrase de reference" \
+              | /opt/verification/bin/python verification/dechiffreur/dechiffrer.py \
+                  crates/vault-core/tests/fixtures/v1 "$sortie"
+            /opt/verification/bin/python verification/dechiffreur/verifier.py \
+              verification/dechiffreur/attendu.json "$sortie"
+        '
         ;;
     shell)
         shift
