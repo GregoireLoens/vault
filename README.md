@@ -54,11 +54,13 @@ Un observateur qui accède au répertoire d'un vault **verrouillé**, sans la pa
 |---|---|---|
 | Le nombre de blobs | Le nombre approximatif de fichiers | Aucune à ce jour |
 | La taille de chaque blob | Une fourchette large de 10 % | Remplissage par paliers géométriques |
-| Les dates du système de fichiers | Les dates de dernière modification du vault, pas celles des fichiers | Les dates d'origine vivent dans l'index chiffré |
+| La date de dernière modification du vault | Quand il a servi pour la dernière fois | Aucune : réécrire l'index est ce qui rend le vault utilisable |
 | Les paramètres de dérivation | Le coût d'une attaque par force brute | Publics par conception |
 
 Il n'apprend **ni** les noms de fichiers, **ni** l'arborescence, **ni** les tailles exactes,
-**ni** le contenu, **ni** si deux fichiers du vault sont identiques.
+**ni** le contenu, **ni** si deux fichiers du vault sont identiques, **ni** dans quel ordre ils
+ont été déposés — les dates des blobs sont toutes ramenées à la même valeur, faute de quoi trier
+le répertoire par date reconstituerait la chronologie du vault.
 
 ### Hors périmètre
 

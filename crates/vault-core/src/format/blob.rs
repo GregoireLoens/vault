@@ -140,6 +140,27 @@ pub(crate) fn blob_aad(blob_id: &BlobId) -> Vec<u8> {
     aad
 }
 
+/// Date imposée à tout fichier de blob sur le système de fichiers hôte
+/// (VR-B5).
+///
+/// Le remplissage cache la taille d'un fichier, et l'identifiant aléatoire son
+/// nom — mais la date de modification que l'hôte pose d'elle-même trahirait
+/// **l'ordre et le rythme des ajouts**. Un observateur qui trie `objects/` par
+/// date reconstituerait la chronologie du vault : ce qui a été déposé en
+/// premier, ce qui l'a été des mois plus tard, et lesquels sont arrivés
+/// ensemble. Rien de tout cela n'est du contenu, et tout cela en dit long.
+///
+/// Toutes les dates sont donc ramenées à la même valeur, ce qui rend les blobs
+/// indiscernables sur ce point comme ils le sont déjà sur les autres. L'époque
+/// Unix est choisie parce qu'elle est manifestement conventionnelle : une date
+/// plausible laisserait croire à une information, alors que celle-ci se lit
+/// pour ce qu'elle est — une absence de date.
+///
+/// La date d'**accès** n'est pas normalisée : le système la remet à jour à
+/// chaque lecture, si bien que la fixer ne tiendrait pas. La date de
+/// modification, elle, ne bouge plus une fois le blob écrit.
+pub(crate) const NORMALIZED_MTIME: std::time::SystemTime = std::time::UNIX_EPOCH;
+
 /// Produit les octets de remplissage à ajouter après le chiffré.
 pub(crate) fn padding(written: u64, padded: u64) -> Vec<u8> {
     let mut filler = vec![0u8; usize::try_from(padded.saturating_sub(written)).unwrap_or(0)];
@@ -263,6 +284,13 @@ mod tests {
         assert_eq!(blob_aad(&a).len(), BLOB_DOMAIN.len() + BLOB_ID_LEN);
         assert!(blob_aad(&a).ends_with(a.as_bytes()));
         assert!(blob_aad(&a).starts_with(BLOB_DOMAIN));
+    }
+
+    /// VR-B5 : la date normalisée est manifestement conventionnelle, et non
+    /// une date plausible qui laisserait croire à une information.
+    #[test]
+    fn la_date_normalisee_est_l_epoque_unix() {
+        assert_eq!(NORMALIZED_MTIME, std::time::UNIX_EPOCH);
     }
 
     #[test]
