@@ -266,6 +266,41 @@ des vaults de référence figés que le logiciel d'aujourd'hui n'a pas produits.
 
 ---
 
+## Ce qui reste à confier à une relecture externe
+
+Énoncé ici pour qu'une demande de devis puisse être faite **sans étude préalable**. Le périmètre
+ci-dessous est ce que le projet ne peut pas se délivrer à lui-même.
+
+**Volume** : deux crates Rust, environ 5 700 lignes couvertes, sans `unsafe`. Le format tient en un
+document de quelque quatre cents lignes, avec vecteurs de test et procédure de déchiffrement pas à
+pas — un relecteur n'a pas à reconstituer le format depuis le code.
+
+**Ce qui est déjà écarté**, et n'a donc pas à être payé :
+
+- la fidélité de la spécification au comportement réel — établie par le déchiffreur indépendant ;
+- le refus de l'entrée hostile sur les quatre surfaces de décodage — établi par la porte et les
+  campagnes ;
+- l'absence de fuite en clair, la détection d'altération, l'atomicité, la compatibilité ascendante
+  — établies par les suites bloquantes depuis `v1.0.0` ;
+- l'absence de dépendance réseau, même transitive.
+
+**Ce qui reste**, et qui demande un regard extérieur compétent :
+
+| Question | Pourquoi elle ne se répond pas ici |
+|---|---|
+| Les paramètres Argon2id retenus — 128 Mio, 3 passes, parallélisme 4 — sont-ils au niveau des recommandations actuelles ? | Un choix de coût se juge contre l'état de l'art d'une attaque, pas contre un test |
+| L'absence d'**engagement de clé** de XChaCha20-Poly1305 sur le désenveloppement de la clé maîtresse importe-t-elle dans ce modèle de menace ? | Question de conception, pas de comportement |
+| La construction du nonce STREAM et la dérivation par blob sont-elles correctement composées ? | Les tests montrent qu'elles sont cohérentes avec elles-mêmes, pas qu'elles sont sûres |
+| Le remplissage par paliers de 10 % laisse-t-il fuir davantage qu'annoncé sur un corpus réel ? | Demande une analyse statistique, pas une assertion |
+| Le modèle de menace omet-il quelque chose ? | Par construction, on ne voit pas ce qu'on n'a pas pensé |
+
+**Pistes de financement**, pour un projet libre sans revenu : les programmes européens de type
+NGI Zero financent des audits de sécurité pour les logiciels libres de confidentialité. Un audit
+commercial ciblé sur ce périmètre se situe, pour ce volume, dans un ordre de grandeur de quelques
+dizaines de milliers d'euros.
+
+---
+
 ## Les six portes
 
 Passées en local avant chaque livraison, dans le conteneur :
