@@ -104,6 +104,8 @@ enum Commande {
         #[arg(long, short = 'r')]
         recursive: bool,
     },
+    /// Change la passphrase. Immédiat : le contenu n'est pas réécrit.
+    Passwd,
     /// Affiche les paramètres publics du vault, sans le déverrouiller.
     Info,
     /// Extrait vers le disque, en clair.
@@ -190,6 +192,7 @@ fn executer(cli: &Cli, console: &mut dyn Console) -> CliResult<()> {
                 recursive: *recursive,
             },
         ),
+        Commande::Passwd => cmd::passwd::executer(&mut contexte),
         Commande::Info => cmd::info::executer(&mut contexte),
         Commande::Extract {
             chemins,
@@ -224,6 +227,7 @@ mod tests {
     use crate::console::fake::FakeConsole;
 
     const PASSPHRASE: &str = "une passphrase bien assez longue";
+    const NOUVELLE: &str = "une toute autre passphrase, aussi longue";
 
     fn analyser(arguments: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("vault").chain(arguments.iter().copied()))
@@ -364,9 +368,9 @@ mod tests {
         assert_eq!(verdicts, vec![true; verdicts.len()]);
     }
 
-    /// Le parcours complet des six commandes, sur un vault jetable.
+    /// Le parcours complet des sept commandes, sur un vault jetable.
     #[test]
-    fn les_six_commandes_s_enchainent() {
+    fn les_sept_commandes_s_enchainent() {
         let atelier = tempfile::tempdir().expect("répertoire temporaire");
         let coffre = atelier.path().join("coffre");
         let source = atelier.path().join("note.txt");
@@ -422,6 +426,13 @@ mod tests {
             b"contenu"
         );
 
+        // La passphrase change avant la suppression : la suite du parcours doit
+        // s'en servir, ce qui prouve que le changement a bien pris.
+        let changement = analyser(&["passwd", "--vault", coffre.to_str().expect("UTF-8")]);
+        let mut console = FakeConsole::new(&[PASSPHRASE, NOUVELLE, NOUVELLE], &[]);
+        executer(&changement, &mut console).expect("changeable");
+        assert!(console.tout_affiche().contains("ne réécrit pas le contenu"));
+
         let suppression = analyser(&[
             "rm",
             "note.txt",
@@ -429,13 +440,13 @@ mod tests {
             "--vault",
             coffre.to_str().expect("UTF-8"),
         ]);
-        let mut console = FakeConsole::new(&[PASSPHRASE], &[]);
+        let mut console = FakeConsole::new(&[NOUVELLE], &[]);
         executer(&suppression, &mut console).expect("supprimable");
         assert!(console.tout_affiche().contains("1 entrée(s) supprimée(s)"));
 
         // Le vault est vide, et la copie extraite plus tôt est intacte.
         let listage = analyser(&["ls", "--vault", coffre.to_str().expect("UTF-8")]);
-        let mut console = FakeConsole::new(&[PASSPHRASE], &[]);
+        let mut console = FakeConsole::new(&[NOUVELLE], &[]);
         executer(&listage, &mut console).expect("listable");
         assert!(
             console

@@ -245,31 +245,48 @@ fn le_code_3_n_est_pas_atteignable_sans_terminal() {
     );
 }
 
-/// CLI-020 : aucune option ne permet de passer la passphrase en argument.
+/// CLI-020 : **aucune option** ne permet de passer la passphrase en argument.
+///
+/// Le balayage porte sur les lignes d'option de chaque aide — celles dont le
+/// premier caractère non blanc est un tiret — et non sur le texte entier. La
+/// version précédente bannissait le mot partout, ce qui était un raccourci
+/// commode tant qu'aucune commande n'avait à parler de passphrase : la
+/// description de `passwd` en parle, sans pour autant en accepter une en
+/// argument. Ce que CLI-020 interdit, c'est le passage par la ligne de
+/// commande, où la valeur atterrirait dans l'historique du shell et dans la
+/// table des processus. C'est cela, et cela seul, qui est vérifié — sur toutes
+/// les commandes, l'aide générale comprise.
 #[test]
 fn aucune_option_n_accepte_la_passphrase() {
-    let aide = vault()
-        .arg("--help")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let aide = String::from_utf8(aide).expect("UTF-8");
-    assert!(!aide.contains("passphrase"), "aide : {aide}");
-
-    for commande in ["create", "add", "ls", "extract", "info", "rm"] {
-        let aide = vault()
-            .args([commande, "--help"])
+    let aide_de = |arguments: &[&str]| {
+        let sortie = vault()
+            .args(arguments)
             .assert()
             .success()
             .get_output()
             .stdout
             .clone();
-        let aide = String::from_utf8(aide).expect("UTF-8");
-        assert!(
-            !aide.contains("--passphrase") && !aide.contains("--password"),
-            "{commande} : {aide}"
-        );
+        String::from_utf8(sortie).expect("UTF-8")
+    };
+
+    let mut fautives: Vec<String> = Vec::new();
+    for commande in ["", "create", "add", "ls", "extract", "info", "rm", "passwd"] {
+        let arguments: Vec<&str> = if commande.is_empty() {
+            vec!["--help"]
+        } else {
+            vec![commande, "--help"]
+        };
+        for ligne in aide_de(&arguments).lines() {
+            let coupee = ligne.trim_start();
+            let est_une_option = coupee.starts_with('-');
+            let evoque_le_secret = coupee.contains("passphrase")
+                || coupee.contains("password")
+                || coupee.contains("secret");
+            if est_une_option && evoque_le_secret {
+                fautives.push(format!("{commande} : {ligne}"));
+            }
+        }
     }
+
+    assert_eq!(fautives, Vec::<String>::new());
 }

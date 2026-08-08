@@ -28,8 +28,8 @@ Ce qui fonctionne aujourd'hui :
 | ✅ `vault ls` | Lister le contenu |
 | ✅ `vault extract` | Ressortir le contenu, octet pour octet |
 | ✅ `vault rm` | Retirer une entrée, définitivement |
+| ✅ `vault passwd` | Changer la passphrase, sans réécrire le contenu |
 | ✅ `vault info` | Paramètres publics du vault, sans le déverrouiller |
-| ⏳ `vault passwd` | Changer la passphrase — pas encore implémenté |
 | ⏳ Export et transfert entre postes | Prévus, pas encore commencés |
 
 ---
@@ -170,6 +170,24 @@ Supprimer 1 entrée(s) ? [o/N] : o
 `--recursive` est requis pour un dossier non vide : un dossier ne part pas par mégarde. La
 suppression réécrit l'index **d'abord** et ne délie les blobs qu'ensuite — une interruption
 laisse ainsi des déchets inertes, jamais un index désignant un contenu absent.
+
+```console
+$ vault passwd --vault ~/mon-vault
+Passphrase :
+Passphrase :
+Confirmez la passphrase :
+Robustesse : bonne
+Passphrase changée.
+L'opération est immédiate et ne réécrit pas le contenu : seule la clé qui protège le vault a
+été réenveloppée. Vos fichiers n'ont pas été touchés.
+```
+
+La rapidité est normale, et c'est pour cela qu'elle est annoncée. La clé qui chiffre votre
+contenu est tirée au hasard à la création et **n'est jamais dérivée de la passphrase** : celle-ci
+ne sert qu'à envelopper cette clé. Changer de passphrase réenveloppe trente-deux octets — un vault
+de quatre cents gigaoctets s'y prête aussi vite qu'un vault vide, et le contenu n'est ni relu ni
+réécrit. Si l'opération est interrompue, le vault s'ouvre avec l'ancienne **ou** avec la nouvelle,
+jamais avec aucune.
 
 `vault info` est la seule commande qui ne demande **rien** : tout ce qu'elle affiche vient de
 l'en-tête, qui est en clair par conception. Elle ne dit donc ni ce que le vault contient, ni
