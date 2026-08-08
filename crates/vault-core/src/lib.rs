@@ -150,6 +150,23 @@ impl Vault {
     pub fn kdf_params(&self) -> KdfParams {
         self.header.kdf_params()
     }
+
+    /// Fonction de dérivation employée par ce vault.
+    ///
+    /// Ce que publie cet accesseur, avec [`Vault::aead_algorithm`],
+    /// [`Vault::format_version`] et [`Vault::kdf_params`], est exactement ce
+    /// que `vault info` a le droit d'afficher (CLI-018) : les champs publics de
+    /// l'en-tête, et rien qui exige la passphrase.
+    #[must_use]
+    pub fn kdf_algorithm(&self) -> &'static str {
+        self.header.kdf_algorithm()
+    }
+
+    /// Chiffrement authentifié employé par ce vault.
+    #[must_use]
+    pub fn aead_algorithm(&self) -> &'static str {
+        self.header.aead_algorithm()
+    }
 }
 
 /// Une session déverrouillée.

@@ -8,6 +8,7 @@
 pub mod add;
 pub mod create;
 pub mod extract;
+pub mod info;
 pub mod ls;
 
 use std::fmt::Write as _;
@@ -37,12 +38,19 @@ pub struct Contexte<'a> {
 impl Contexte<'_> {
     /// Ouvre et déverrouille le vault.
     ///
+    /// FR-012 : le refus d'accès concurrent est prononcé **avant** la saisie.
+    /// Réclamer une passphrase pour annoncer ensuite que le vault était déjà
+    /// ouvert ferait payer à l'utilisateur une saisie qui ne pouvait pas
+    /// aboutir. La vérification qui fait foi reste celle de [`Vault::unlock`],
+    /// qui prend le verrou et le garde.
+    ///
     /// # Errors
     ///
     /// Celles de [`Vault::open`] et [`Vault::unlock`], plus
     /// [`CliError::NotInteractive`] si la passphrase ne peut pas être saisie.
     pub fn deverrouiller(&mut self) -> CliResult<UnlockedVault> {
         let vault = Vault::open(&self.vault_dir)?;
+        vault.check_available()?;
         let passphrase = prompt::passphrase_existante(self.console)?;
         let mut session = vault.unlock(passphrase)?;
         // CLI-023 : la valeur est conservée et ne déclenche rien. FR-010 est

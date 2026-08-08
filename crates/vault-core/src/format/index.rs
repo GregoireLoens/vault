@@ -119,9 +119,8 @@ impl Index {
     }
 
     // Dérogation datée : la suppression relève de la phase 5 (T058 et
-    // suivantes) et le balayage des blobs orphelins de T054. Les deux sont
-    // écrits et testés ici parce qu'ils font partie du format ; leurs appelants
-    // arrivent avec ces tâches.
+    // suivantes). Elle est écrite et testée ici parce qu'elle fait partie du
+    // format ; son appelant arrive avec cette tâche.
     #[allow(dead_code)]
     /// Retire une entrée et, si `recursive`, toute sa descendance.
     ///
@@ -162,8 +161,8 @@ impl Index {
     /// Tous les identifiants de blobs référencés.
     ///
     /// VR-I6 : un blob présent dans `objects/` mais absent de cet ensemble est
-    /// un déchet, supprimable au déverrouillage suivant.
-    #[allow(dead_code)]
+    /// un déchet, supprimé au déverrouillage suivant par
+    /// [`crate::ops::unlock`].
     pub(crate) fn referenced_blobs(&self) -> BTreeSet<BlobId> {
         self.entries
             .iter()

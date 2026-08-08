@@ -229,7 +229,13 @@ hors de sa destination.
 - Aucun composant de `path` n'est vide, ne vaut `.` ou `..`, et ne contient `/`, `\` ni l'octet
   nul.
 - Tout `blob_id` référencé doit exister dans `objects/`. L'inverse n'est pas vrai : un blob non
-  référencé est un déchet, supprimable.
+  référencé est un **déchet**, et non une corruption. L'index est le point d'engagement du vault ;
+  un blob écrit puis abandonné par une opération interrompue n'existe pas de son point de vue.
+
+  Une implémentation **peut** le supprimer, et vault le fait silencieusement à chaque
+  déverrouillage — sans le signaler, puisque rien d'anormal ne s'est produit, et sans faire échouer
+  l'ouverture si la suppression est impossible. Un fichier de `objects/` dont le nom n'est pas
+  64 chiffres hexadécimaux n'est pas un blob : il est laissé en place.
 
 ### Noms de fichiers
 

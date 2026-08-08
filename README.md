@@ -27,9 +27,9 @@ Ce qui fonctionne aujourd'hui :
 | ✅ `vault add` | Y déposer fichiers et dossiers |
 | ✅ `vault ls` | Lister le contenu |
 | ✅ `vault extract` | Ressortir le contenu, octet pour octet |
+| ✅ `vault info` | Paramètres publics du vault, sans le déverrouiller |
 | ⏳ `vault rm` | Supprimer une entrée — pas encore implémenté |
 | ⏳ `vault passwd` | Changer la passphrase — pas encore implémenté |
-| ⏳ `vault info` | Paramètres publics du vault — pas encore implémenté |
 | ⏳ Export et transfert entre postes | Prévus, pas encore commencés |
 
 ---
@@ -159,6 +159,20 @@ impots-2025.pdf  2.4 Mo
 
 $ vault extract impots-2025.pdf --to ~/sortie --vault ~/mon-vault
 1 entrée(s) extraite(s) vers /home/vous/sortie.
+```
+
+`vault info` est la seule commande qui ne demande **rien** : tout ce qu'elle affiche vient de
+l'en-tête, qui est en clair par conception. Elle ne dit donc ni ce que le vault contient, ni
+combien il en contient — le savoir exigerait de le déverrouiller.
+
+```console
+$ vault info --vault ~/mon-vault
+Version du format   : 1
+Dérivation de clé   : argon2id
+  mémoire           : 131072 Kio (128 Mio)
+  passes            : 3
+  parallélisme      : 4
+Chiffrement         : xchacha20poly1305
 ```
 
 La passphrase est **toujours** saisie de manière masquée sur le terminal. Elle n'est jamais

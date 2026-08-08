@@ -95,6 +95,8 @@ enum Commande {
         #[arg(long)]
         long: bool,
     },
+    /// Affiche les paramètres publics du vault, sans le déverrouiller.
+    Info,
     /// Extrait vers le disque, en clair.
     Extract {
         /// Entrées à extraire.
@@ -172,6 +174,7 @@ fn executer(cli: &Cli, console: &mut dyn Console) -> CliResult<()> {
                 long: *long,
             },
         ),
+        Commande::Info => cmd::info::executer(&mut contexte),
         Commande::Extract {
             chemins,
             destination,
@@ -291,9 +294,63 @@ mod tests {
         ));
     }
 
-    /// Le parcours complet des quatre commandes, sur un vault jetable.
+    /// CLI-019, sous sa forme la plus exigeante : **le code et le message
+    /// produits par une passphrase erronée et par un vault altéré sont
+    /// identiques, octet pour octet**.
+    ///
+    /// La vérification a lieu ici plutôt que dans `tests/cli.rs` parce qu'elle
+    /// exige une passphrase, donc un terminal, qu'un processus de test n'a pas
+    /// (CLI-022). Ce chemin-ci traverse pourtant le même `executer` et le même
+    /// `CliError` que le binaire : c'est bien la sortie réelle qui est comparée.
     #[test]
-    fn les_quatre_commandes_s_enchainent() {
+    fn le_code_3_est_indiscernable_de_ses_deux_causes() {
+        let atelier = tempfile::tempdir().expect("répertoire temporaire");
+        let coffre = atelier.path().join("coffre");
+        vault_core::Vault::create(
+            &coffre,
+            vault_core::SecretString::from(PASSPHRASE.to_owned()),
+            vault_core::KdfParams::new(64, 1, 1).expect("valides"),
+        )
+        .expect("créable")
+        .lock();
+
+        let listage = analyser(&["ls", "--vault", coffre.to_str().expect("UTF-8")]);
+        let echouer = |saisie: &str| {
+            let mut console = FakeConsole::new(&[saisie], &[]);
+            let erreur = executer(&listage, &mut console).expect_err("refus attendu");
+            (erreur.code(), erreur.message().into_bytes())
+        };
+
+        let reference = echouer("une passphrase parfaitement fausse");
+        assert_eq!(reference.0, 3);
+
+        // Chaque altération de l'en-tête qui mène jusqu'à l'authentification
+        // doit rendre exactement la même chose, avec la **bonne** passphrase.
+        let en_tete = coffre.join("header");
+        let original = std::fs::read(&en_tete).expect("lisible");
+        let mut verdicts = Vec::new();
+        for position in 0..original.len() {
+            let mut altere = original.clone();
+            altere[position] ^= 0x01;
+            std::fs::write(&en_tete, &altere).expect("écrivable");
+
+            let obtenu = echouer(PASSPHRASE);
+            if obtenu.0 == 3 {
+                verdicts.push(obtenu == reference);
+            }
+        }
+        std::fs::write(&en_tete, &original).expect("écrivable");
+
+        assert!(
+            !verdicts.is_empty(),
+            "aucune altération n'a produit un code 3"
+        );
+        assert_eq!(verdicts, vec![true; verdicts.len()]);
+    }
+
+    /// Le parcours complet des cinq commandes, sur un vault jetable.
+    #[test]
+    fn les_cinq_commandes_s_enchainent() {
         let atelier = tempfile::tempdir().expect("répertoire temporaire");
         let coffre = atelier.path().join("coffre");
         let source = atelier.path().join("note.txt");
@@ -327,6 +384,12 @@ mod tests {
         let mut console = FakeConsole::new(&[PASSPHRASE], &[]);
         executer(&listage, &mut console).expect("listable");
         assert!(console.tout_affiche().contains("note.txt"));
+
+        // CLI-018 : seule commande à n'exiger aucune saisie.
+        let information = analyser(&["info", "--vault", coffre.to_str().expect("UTF-8")]);
+        let mut console = FakeConsole::non_interactive();
+        executer(&information, &mut console).expect("consultable");
+        assert!(console.tout_affiche().contains("argon2id"));
 
         let extraction = analyser(&[
             "extract",
