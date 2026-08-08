@@ -195,6 +195,22 @@ fn sans_parametres_ceux_du_vault_sont_conserves() {
     );
 }
 
+/// Un temporaire abandonné par un processus tué ne gêne pas l'ouverture : il
+/// n'est référencé par rien, et `Vault::open` ne lit que `header`.
+///
+/// Le résidu est déposé à la main plutôt qu'en tuant un processus : ce test n'a
+/// donc rien à faire dans `rekey_interruption.rs`, dont l'en-tête explique
+/// pourquoi aucun autre test ne peut y cohabiter.
+#[test]
+fn un_temporaire_abandonne_n_empeche_pas_d_ouvrir() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let coffre = coffre_peuple(atelier.path());
+
+    std::fs::write(coffre.join(".vault-tmp-abandonne"), b"residu").expect("écrivable");
+
+    assert!(ouvre_avec(&coffre, ANCIENNE));
+}
+
 /// FR-005, C-001 : le minimum de longueur vaut aussi au changement, et le refus
 /// arrive **avant** toute écriture — l'ancienne passphrase ouvre toujours.
 #[test]

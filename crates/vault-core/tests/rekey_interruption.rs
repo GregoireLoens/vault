@@ -132,18 +132,3 @@ fn une_interruption_laisse_toujours_le_vault_ouvrable() {
 
     assert_eq!(verdicts, vec![true; 8]);
 }
-
-/// Un temporaire abandonné par un processus tué ne gêne pas l'ouverture : il
-/// n'est référencé par rien, et `Vault::open` ne lit que `header`.
-#[test]
-fn un_temporaire_abandonne_n_empeche_pas_d_ouvrir() {
-    let atelier = tempfile::tempdir().expect("répertoire temporaire");
-    let coffre = atelier.path().join("coffre");
-    Vault::create(&coffre, secret(ANCIENNE), params())
-        .expect("créable")
-        .lock();
-
-    std::fs::write(coffre.join(".vault-tmp-abandonne"), b"residu").expect("écrivable");
-
-    assert!(ouvre_avec(&coffre, ANCIENNE));
-}
