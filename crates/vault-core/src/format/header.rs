@@ -231,6 +231,32 @@ impl Header {
         self.kdf_params
     }
 
+    /// Identifiant de la fonction de dérivation employée par ce vault.
+    ///
+    /// La valeur est constante, et ce n'est pas un raccourci : [`Header::decode`]
+    /// refuse tout en-tête qui en annonce une autre. Un vault lu est donc
+    /// nécessairement celui-ci. Le jour où une version 2 du format admettra un
+    /// autre algorithme, c'est ici que le choix se fera — d'où un accesseur
+    /// plutôt qu'une constante publique, qui figerait l'interface.
+    // `self` n'est pas lu aujourd'hui, et c'est exactement ce que dit le
+    // paragraphe ci-dessus : la valeur est déterminée par la version de format,
+    // dont une seule existe. En faire une fonction associée, comme le suggère
+    // clippy, obligerait à rompre l'interface le jour où il y en aura deux.
+    #[allow(clippy::unused_self)]
+    #[must_use]
+    pub fn kdf_algorithm(&self) -> &'static str {
+        KDF_ALGORITHM
+    }
+
+    /// Identifiant du chiffrement authentifié employé par ce vault.
+    ///
+    /// Voir [`Header::kdf_algorithm`] pour la raison d'un accesseur.
+    #[allow(clippy::unused_self)]
+    #[must_use]
+    pub fn aead_algorithm(&self) -> &'static str {
+        AEAD_ALGORITHM
+    }
+
     /// Partie publique de l'en-tête, telle qu'elle est liée à l'enveloppement
     /// de la clé maîtresse.
     ///

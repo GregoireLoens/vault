@@ -17,10 +17,11 @@ use std::path::Path;
 use secrecy::SecretString;
 
 use crate::error::{Error, Result};
+use crate::format::blob::BlobId;
 use crate::format::header::Header;
 use crate::format::index::Index;
 use crate::fs::lock::VaultLock;
-use crate::ops::{HEADER_FILE, INDEX_FILE};
+use crate::ops::{HEADER_FILE, INDEX_FILE, OBJECTS_DIR};
 use crate::{UnlockedVault, Vault};
 
 impl Vault {
@@ -67,7 +68,69 @@ impl Vault {
         let master_key = header.unlock(&passphrase)?;
         let index = Index::decrypt(&master_key, &std::fs::read(path.join(INDEX_FILE))?)?;
 
+        sweep_orphans(&path, &index);
+
         Ok(UnlockedVault::new(path, header, master_key, index, lock))
+    }
+
+    /// Vérifie qu'aucune autre instance ne détient ce vault (FR-012).
+    ///
+    /// Sert à prononcer le refus **avant** de réclamer la passphrase : sans
+    /// cela, l'utilisateur d'une seconde instance saisirait son secret pour
+    /// apprendre ensuite qu'elle ne pouvait pas ouvrir.
+    ///
+    /// La vérification qui fait foi reste celle de [`Vault::unlock`], qui prend
+    /// le verrou et le garde. Celle-ci le relâche aussitôt, et une autre
+    /// instance peut donc s'en emparer dans l'intervalle — auquel cas c'est
+    /// `unlock` qui refusera, avec la même erreur. Ce n'est pas une course
+    /// dangereuse : les deux issues sont un refus correct, et aucune ne donne
+    /// l'accès à deux instances à la fois.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::AlreadyInUse`] si une autre instance détient le verrou ;
+    /// - [`Error::Io`] si le fichier support du verrou est inaccessible.
+    pub fn check_available(&self) -> Result<()> {
+        VaultLock::acquire(self.path()).map(drop)
+    }
+}
+
+/// Supprime les blobs que l'index ne référence pas (VR-I6).
+///
+/// L'index est le **point d'engagement** du vault (D-008) : un blob écrit puis
+/// abandonné par une opération interrompue n'existe pas de son point de vue.
+/// C'est un déchet inerte, et non une corruption — d'où le silence, exigé par
+/// VR-I6. Le signaler laisserait croire à une atteinte à l'intégrité là où le
+/// format a fonctionné comme prévu.
+///
+/// Trois choses ne sont **pas** faites ici, chacune délibérément :
+///
+/// - un balayage impossible — répertoire illisible, support en lecture seule —
+///   ne fait pas échouer l'ouverture. Refuser d'ouvrir un vault par ailleurs
+///   intact parce qu'on ne peut pas en retirer un déchet serait une punition
+///   sans rapport avec la faute ;
+/// - un fichier dont le nom n'est pas un identifiant de blob est laissé en
+///   place. Ce n'est pas un blob, donc pas un déchet du vault : ce répertoire
+///   n'est pas à nous seuls, et supprimer ce qu'on ne reconnaît pas serait
+///   dépasser le mandat ;
+/// - l'échec d'une suppression n'interrompt pas le balayage. Le déchet restant
+///   sera repris au déverrouillage suivant.
+fn sweep_orphans(vault_dir: &Path, index: &Index) {
+    let Ok(entries) = std::fs::read_dir(vault_dir.join(OBJECTS_DIR)) else {
+        return;
+    };
+    let referenced = index.referenced_blobs();
+
+    for entry in entries.flatten() {
+        // Un nom non représentable en UTF-8 ne peut pas être un identifiant de
+        // blob, qui est fait de soixante-quatre chiffres hexadécimaux : la
+        // conversion avec perte le fera refuser par `from_hex`.
+        let Ok(blob_id) = BlobId::from_hex(&entry.file_name().to_string_lossy()) else {
+            continue;
+        };
+        if !referenced.contains(&blob_id) {
+            drop(std::fs::remove_file(entry.path()));
+        }
     }
 }
 
@@ -209,6 +272,97 @@ mod tests {
             Vault::open(&coffre).expect("ouvrable").unlock(passphrase()),
             Err(Error::Io(_))
         ));
+    }
+
+    /// VR-I6 : un blob que l'index ne référence pas est un déchet, retiré
+    /// silencieusement au déverrouillage. Les blobs référencés, eux, sont
+    /// intacts.
+    #[test]
+    fn les_blobs_orphelins_sont_balayes_au_deverrouillage() {
+        let atelier = tempfile::tempdir().expect("répertoire temporaire");
+        let coffre = atelier.path().join("coffre");
+        let source = atelier.path().join("note.txt");
+        std::fs::write(&source, b"une note").expect("écrivable");
+
+        let mut vault = Vault::create(&coffre, passphrase(), params()).expect("créable");
+        let chemin = crate::VaultPath::from_components([b"note.txt".to_vec()]).expect("valide");
+        vault
+            .add_file(
+                &source,
+                &chemin,
+                crate::AddMode::Copy,
+                crate::OnConflict::Fail,
+            )
+            .expect("ajoutable");
+        let (legitime, _) = vault.blob_of(&chemin).expect("présente").expect("un blob");
+        vault.lock();
+
+        // Un blob abandonné par une opération interrompue, et un fichier
+        // étranger qui n'est pas un blob.
+        let objets = coffre.join(OBJECTS_DIR);
+        let orphelin = objets.join(crate::BlobId::generate().to_hex());
+        let etranger = objets.join("pas-un-identifiant-de-blob");
+        std::fs::write(&orphelin, "déchet inerte").expect("écrivable");
+        std::fs::write(&etranger, "fichier étranger").expect("écrivable");
+
+        let session = Vault::open(&coffre)
+            .expect("ouvrable")
+            .unlock(passphrase())
+            .expect("déverrouillable");
+
+        assert!(!orphelin.exists(), "l'orphelin devait être balayé");
+        assert!(etranger.exists(), "un fichier étranger n'est pas un déchet");
+        assert!(
+            objets.join(legitime.to_hex()).exists(),
+            "le blob référencé devait survivre"
+        );
+        // Le contenu reste extractible : le balayage n'a touché à rien d'utile.
+        let sortie = atelier.path().join("sortie");
+        std::fs::create_dir(&sortie).expect("créable");
+        session
+            .extract(&chemin, &sortie, crate::OnConflict::Fail)
+            .expect("extractible");
+    }
+
+    /// Un balayage impossible ne fait pas échouer l'ouverture d'un vault par
+    /// ailleurs intact.
+    #[test]
+    fn un_balayage_impossible_n_empeche_pas_d_ouvrir() {
+        let atelier = tempfile::tempdir().expect("répertoire temporaire");
+        let coffre = coffre_neuf(atelier.path());
+        std::fs::remove_dir_all(coffre.join(OBJECTS_DIR)).expect("supprimable");
+
+        let session = Vault::open(&coffre)
+            .expect("ouvrable")
+            .unlock(passphrase())
+            .expect("déverrouillable malgré le balayage impossible");
+        assert!(session.list(None).is_empty());
+    }
+
+    /// FR-012 : la disponibilité se vérifie sans passphrase, pour refuser avant
+    /// de la réclamer. La vérification relâche le verrou aussitôt.
+    #[test]
+    fn la_disponibilite_se_verifie_sans_passphrase() {
+        let atelier = tempfile::tempdir().expect("répertoire temporaire");
+        let coffre = atelier.path().join("coffre");
+        let session = Vault::create(&coffre, passphrase(), params()).expect("créable");
+
+        assert!(matches!(
+            Vault::open(&coffre).expect("ouvrable").check_available(),
+            Err(Error::AlreadyInUse)
+        ));
+
+        session.lock();
+        Vault::open(&coffre)
+            .expect("ouvrable")
+            .check_available()
+            .expect("disponible");
+
+        // Le verrou a bien été relâché : le déverrouillage qui suit l'obtient.
+        Vault::open(&coffre)
+            .expect("ouvrable")
+            .unlock(passphrase())
+            .expect("déverrouillable");
     }
 
     /// C-003 bis, VR-S3 : le délai d'inactivité est conservé et ne déclenche
