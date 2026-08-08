@@ -85,27 +85,63 @@ voir [`docs/verifications.md`](verifications.md) pour ce qui a été vérifié, 
 
 ## 2. Vérifier la signature
 
-> ⚠ **Pas encore en place.** Les livraisons `v0.1.0` à `v1.0.0` ne sont **pas** signées.
->
-> Ce document décrira la procédure dès que la clé de signature sera en service. Il ne la décrit pas
-> par avance : une marche à suivre qui ne fonctionne pas est pire qu'une absence de marche à
-> suivre, parce qu'elle laisse croire qu'on a vérifié quelque chose.
+Les livraisons sont signées par **clé SSH**. Le fichier des signataires autorisés est versionné
+dans le dépôt, ce qui rend la vérification possible **hors de la forge** — une vérification qui ne
+serait possible que sur le site hébergeant le code reviendrait à lui demander d'attester de
+lui-même.
 
-### Ce qui est prévu
-
-La signature se fera par **clé SSH**, et le dépôt contiendra le fichier de signataires autorisés
-permettant la vérification **hors de la forge** :
+### La procédure
 
 ```bash
 git -c gpg.ssh.allowedSignersFile=.github/allowed_signers tag -v <version>
+echo "code de retour : $?"
 ```
 
-Vérifier hors de la forge est le point. Une vérification qui ne serait possible que sur le site
-qui héberge le code reviendrait à lui demander d'attester de lui-même.
+**Fiez-vous au code de retour, pas au texte.** C'est le point le plus important de cette section :
+
+| Code | Signification |
+|---|---|
+| `0` | La signature est valide **et** la clé figure parmi les signataires autorisés |
+| non nul | Signature invalide, **ou clé inconnue** |
+
+Le piège est réel et mérite d'être connu : présenté avec un fichier de signataires qui ne contient
+pas la bonne clé, `git` affiche tout de même
+
+```text
+Good "git" signature with RSA key SHA256:…
+No principal matched.
+```
+
+La première ligne dit seulement que la signature est cohérente avec **une** clé — n'importe
+laquelle. C'est la seconde qui compte, et le code de retour vaut alors `1`. Un lecteur pressé qui
+s'arrête à « Good signature » n'a **rien vérifié du tout**.
+
+### Ce qui a été éprouvé
+
+La chaîne complète a été déroulée, et pas seulement décrite :
+
+| Cas | Résultat |
+|---|---|
+| Tag signé, fichier de signataires du dépôt | `Good "git" signature`, code `0` |
+| Même tag, fichier contenant une **autre** clé | `No principal matched`, code `1` |
+| Même tag, fichier de signataires **vide** | code `1` |
+
+Le second cas est celui qui compte : il établit que le fichier de signataires est réellement
+consulté, et non décoratif.
 
 ### Le sort des livraisons déjà publiées
 
-Les tags `v0.1.0` à `v1.0.0` resteront **non signés**. Les signer supposerait de les déplacer, ce
-qui casserait les références existantes — et une signature apposée après coup n'atteste de toute
-façon pas grand-chose. **La politique s'appliquera à partir de la livraison suivante**, et c'est
-dit ici pour qu'un tiers ne conclue pas à une anomalie en constatant leur absence de signature.
+Les tags `v0.1.0` à `v1.0.0` sont **non signés** et le resteront. Les signer supposerait de les
+déplacer, ce qui casserait les références existantes — et une signature apposée après coup
+n'atteste de toute façon pas grand-chose sur les conditions dans lesquelles la version a été
+produite.
+
+**La politique s'applique à partir de `v1.1.0`.** C'est dit ici pour qu'un tiers ne conclue pas à
+une anomalie en constatant l'absence de signature sur les versions antérieures.
+
+### Ce que la signature n'établit pas
+
+Elle établit que la livraison vient bien du détenteur de la clé. **Elle ne dit rien du contenu** —
+un mainteneur dont la machine serait compromise signerait de bonne foi un binaire qui ne l'est
+pas. C'est précisément pour cela que la reconstruction de la section 1 existe : les deux
+vérifications se complètent et ne se remplacent pas.

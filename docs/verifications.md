@@ -266,6 +266,55 @@ des vaults de référence figés que le logiciel d'aujourd'hui n'a pas produits.
 
 ---
 
+### Les sept scénarios de vérification, déroulés
+
+| Scénario | Résultat |
+|---|---|
+| 1 — déchiffrer sans vault | 4 fichiers restitués octet pour octet |
+| 2 — passphrase erronée | échec au désenveloppement, **rien d'écrit** |
+| 3 — vecteurs publiés | 5 vérifications vertes, publiques et secrètes |
+| 4 — entrée hostile | 5 suites vertes, 768 entrées par surface |
+| 5 — corpus rejoué sans exploration | 4 suites vertes |
+| 6 — provenance | reconstruction déterministe, signature vérifiée hors forge |
+| 7 — signalement | `SECURITY.md` à la racine, canal et délais annoncés |
+
+**Un écart, dans le quickstart lui-même** : les scénarios 3 à 5 y étaient écrits
+`cargo test --workspace --all-targets <mot>`, ce qui filtre les **noms de tests** et non les
+binaires. Aucun test de `regressions.rs` ne contenant le mot « regressions », la commande
+rapportait « 0 passed » — c'est-à-dire un succès sans avoir rien exécuté. La forme juste est
+`cargo test -p vault-core --test regressions`.
+
+C'est le même défaut que celui relevé au scénario 2 du quickstart de `001-vault-core` : une
+commande de vérification qui ne peut pas échouer. Elle est d'autant plus trompeuse ici qu'elle
+affiche `ok`.
+
+---
+
+## Provenance des livraisons — SC-006, SC-007
+
+**Reconstruction.** Depuis la même image et la même architecture, deux compilations successives —
+la seconde après effacement complet des artefacts — produisent la **même empreinte au bit près** :
+`6728fa10…a862a0` pour `vault-cli` en profil de publication. Ce n'est pas une espérance, c'est un
+constat reproduit. La chaîne figée, le `Cargo.lock` versionné et la neutralisation du chemin de
+compilation y suffisent.
+
+Le drapeau `--remap-path-prefix` a d'abord été placé dans `.cargo/config.toml`, puis retiré :
+appliqué à **toutes** les compilations, il perturbait l'instrumentation de couverture et faisait
+tomber le seuil à 99,53 %. Il appartient à la commande de reconstruction, pas à la configuration
+du dépôt.
+
+**Signature.** La chaîne a été déroulée de bout en bout, pas seulement décrite : un tag signé se
+vérifie hors de la forge avec le fichier de signataires versionné (code `0`), une clé étrangère
+est refusée (code `1`), un fichier vide aussi.
+
+Un piège a été trouvé à cette occasion et documenté dans
+[`reconstruction.md`](reconstruction.md) : **`git` affiche « Good signature » même lorsque la clé
+n'est pas autorisée.** Seules la ligne « No principal matched » et le code de retour font foi. Un
+vérificateur pressé qui s'arrête à la première ligne n'a rien vérifié — c'est exactement le genre
+de détail qui rend une procédure inutile s'il n'est pas écrit.
+
+---
+
 ## Ce qui reste à confier à une relecture externe
 
 Énoncé ici pour qu'une demande de devis puisse être faite **sans étude préalable**. Le périmètre

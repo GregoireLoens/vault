@@ -1,0 +1,13 @@
+# Signataires autorisés des livraisons de vault — 002, T032
+#
+# Ce fichier est ce qui rend la vérification possible **hors de la forge** :
+#
+#   git -c gpg.ssh.allowedSignersFile=.github/allowed_signers tag -v <version>
+#
+# Une vérification qui ne serait possible que sur le site hébergeant le code
+# reviendrait à lui demander d'attester de lui-même.
+#
+# Format : <principal> <type> <clé>. Le principal est comparé à l'adresse de
+# l'auteur du tag.
+
+18573755+GregoireLoens@users.noreply.github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCfXIjNEuo7ADtNqihLMzQ3TfTRDsNY3xENrZladAgSRf+0fhqnB5PeyKDLnT4UDLR9eCwBXgLCV6BBKmQ6WwU7PRxOaAsWHxNcVXuVUXD1YJ3IF1i2jw8NvKmeuhztUKGdxj5GcDV9pfOnewX5w+NG+AdaybFfcg2gWsI3p2/FRnr6SgxuAf8P9M7EXzm4XZtuDXJzo1MZBckozPtjtWobtiAVNq1+fZFsYs7N9WFtXtPT41Cuo7COZPgA6vR2VGnboYKuBa1yVZW/yVjKf7HDUADX+FiPqdXZj80qCObfBvz4Ljp3cMwz2cVCf+wLhkDVrHVOdaXEijeIr7mVWL83kPg/xjaakdUX/IICdaKgdZFGDJAayh+89iBj1dcKuXIT4UT2UBxC+L2nCF1XYd5Ki/YNwKxOWeVXVZf2vaoqdJOJPCIQ3Mt/Wl1PqQka+8AjTjl0NRShuDQrh4bICo14lAlEda5mD+xCqKFi/znM7oVL7wJyw14+er2dJlaFNjc=

@@ -284,9 +284,12 @@ centaines d'entrées que personne n'a choisies ; des campagnes d'exploration gui
 hors ligne. L'étendue exacte de ce qui a été exploré — et ce que cela n'établit pas — est consignée
 dans [`docs/verifications.md`](docs/verifications.md).
 
-**Le binaire correspond au code.** [`docs/reconstruction.md`](docs/reconstruction.md) donne la
-marche à suivre, et surtout le critère qui distingue une divergence attendue d'une divergence
-suspecte — sans quoi constater un écart ne permettrait de conclure ni dans un sens ni dans l'autre.
+**Le binaire correspond au code, et la livraison vient de son auteur.**
+[`docs/reconstruction.md`](docs/reconstruction.md) donne les deux marches à suivre : reconstruire
+et comparer — avec le critère qui distingue une divergence attendue d'une divergence suspecte,
+sans quoi constater un écart ne permettrait de conclure ni dans un sens ni dans l'autre — puis
+vérifier la signature du tag hors de la forge. Les livraisons sont signées **à partir de
+`v1.1.0`** ; les précédentes ne le sont pas, et le document dit pourquoi.
 
 **Une faille se signale en privé.** Voir [`SECURITY.md`](SECURITY.md) : canal non public, accusé de
 réception sous 7 jours, divulgation coordonnée à 90 jours, et la liste de ce qui **n'est pas** une
