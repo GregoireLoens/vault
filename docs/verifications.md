@@ -76,6 +76,78 @@ sans buter. Cela reste à faire faire par quelqu'un d'autre.
 
 ---
 
+## Refus de l'entrée hostile — SC-004, SC-005
+
+Deux dispositifs de nature différente, et non un seul.
+
+### La porte : exploration engendrée, déterministe
+
+`crates/vault-core/tests/hostile.rs` soumet **768 entrées par surface** — en-tête, index, blob,
+chemins — en trois familles : octets arbitraires, structures presque valides lourdement altérées,
+structures valides tronquées. Le générateur part d'une graine figée : la suite explorée est
+exactement la même partout, à chaque exécution. Une porte dont la graine varie devient un
+générateur d'échecs inexpliqués, celui qui voit rouge ne pouvant pas reproduire ce que la machine
+d'en face a vu.
+
+**Deux propriétés y ont été reformulées après un premier échec, et l'erreur était dans l'énoncé,
+pas dans le logiciel :**
+
+- exiger que `Vault::open` échoue sur tout en-tête altéré était **faux**. L'ouverture ne fait que
+  décoder les champs publics et n'authentifie rien — c'est documenté, et c'est ce qui permet à
+  `vault info` de travailler sans passphrase. La propriété juste est plus forte : *si* une entrée
+  hostile mène jusqu'à une session ouverte, le contenu de cette session doit être **le bon** ;
+- exiger que toute altération de blob fasse échouer l'extraction était **faux** aussi. Le
+  remplissage n'est ni déchiffré ni interprété (VR-B3) : l'altérer laisse légitimement
+  l'extraction aboutir. La propriété juste : ou bien l'extraction échoue **sans rien écrire**, ou
+  bien elle aboutit et restitue le contenu d'origine octet pour octet. Le troisième cas — aboutir
+  sur des données altérées — est le seul interdit.
+
+`crates/vault-core/tests/regressions.rs` rejoue en permanence les entrées ayant compté. Aucune
+campagne n'ayant encore révélé de défaut, il est amorcé avec les cas limites que le développement
+a rencontrés — dont le nom de blob multi-octets, qui fait paniquer un découpage naïf de chaîne
+hexadécimale.
+
+### Les campagnes : exploration guidée par la couverture
+
+Menées hors ligne, avec `cargo-afl` sur chaîne **stable** — introduire une chaîne *nightly* aurait
+rompu la reproductibilité tenue depuis le premier commit.
+
+Campagne initiale du 2026-08-08, **60 secondes par surface** :
+
+| Surface | Exécutions | Vitesse | Chemins découverts | Plantages | Blocages |
+|---|---|---|---|---|---|
+| En-tête | 1 555 129 | 25 917/s | 1 237 | **0** | **0** |
+| Index authentifié | 2 016 634 | 33 608/s | 986 | **0** | **0** |
+| Chemins | 2 490 482 | 41 507/s | 71 | **0** | **0** |
+
+Soit environ **six millions d'exécutions**, sans un seul plantage ni blocage.
+
+**Ce que cela n'établit pas.** Soixante secondes par surface est une campagne **courte** : elle
+écarte les défauts qui se trouvent vite, pas ceux qui demandent des heures. Les 1 237 chemins
+découverts sur l'en-tête montrent d'ailleurs que l'exploration était encore en train de progresser
+quand elle s'est arrêtée. L'absence de découverte n'est donc pas une preuve d'absence de défaut,
+et ce tableau est publié pour que le lecteur en juge lui-même plutôt que de conclure du silence à
+la sûreté.
+
+**Comment relancer**, une fois pour toutes l'outil installé dans le montage persistant :
+
+```bash
+./scripts/dev.sh --net bash -c 'cargo install --locked cargo-afl@0.18.2 && cargo afl config --build'
+./scripts/dev.sh bash -c 'cd fuzz && cargo afl build --release'
+./scripts/dev.sh bash -c 'cd fuzz && AFL_SKIP_CPUFREQ=1 AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \
+  cargo afl fuzz -i corpus/entete -o /tmp/afl -V 3600 target/release/entete'
+```
+
+Toute entrée fautive rejoint `regressions.rs` **avant même** que le défaut soit corrigé : versée
+après, elle risque de ne jamais l'être.
+
+**Une conséquence de l'exclusion, à ne pas taire** : `fuzz/` étant hors de l'espace de travail,
+`cargo deny` ne voit pas sa dépendance `afl` — la porte d'approvisionnement porte sur ce qui est
+livré, et ce crate ne l'est pas. La contrepartie est que cette dépendance-là n'est vérifiée par
+aucun outil ; elle est figée par version, comme le reste, et n'entre dans aucun binaire.
+
+---
+
 ## SC-010 — 4 Go sous 2 Go de mémoire
 
 Exécuté sous limite mémoire imposée par le noyau, `./scripts/dev.sh --mem 2g`, en profil

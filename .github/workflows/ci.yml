@@ -142,6 +142,22 @@ jobs:
             --ignore-filename-regex 'vault-cli/src/console/tty\.rs' \
             --fail-under-lines 100
 
+  fuzz-harness:
+    # Le crate `fuzz/` est exclu de l'espace de travail : instrumenté, il
+    # fausserait la mesure de couverture. Rien ne le compilerait donc, et il
+    # pourrirait en silence — on ne s'en apercevrait que le jour où l'on veut
+    # mener une campagne, c'est-à-dire le jour où l'on en a besoin.
+    #
+    # Les campagnes elles-mêmes ne sont **pas** jouées ici : leur durée n'est
+    # pas bornée, ce qui les rend impropres à une porte. Voir
+    # `docs/verifications.md` pour l'étendue de celles qui ont été menées.
+    name: Harnais d'exploration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo check --manifest-path fuzz/Cargo.toml --all-targets
+
   format-spec:
     # Le principe IV exige qu'un vault soit déchiffrable à partir de sa seule
     # spécification, sans exécuter vault. Rien ne le vérifiait : `compat.rs`

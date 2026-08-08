@@ -222,8 +222,24 @@ impl Index {
         let nonce: aead::Nonce = nonce.try_into().map_err(|_| Error::Corrupted)?;
 
         let plaintext = aead::open(master_key.expose(), &nonce, INDEX_DOMAIN, sealed)?;
-        let repr: IndexRepr =
-            ciborium::from_reader(plaintext.as_slice()).map_err(|_| Error::Corrupted)?;
+        Self::decode_plain(&plaintext)
+    }
+
+    /// Décode un index **déjà authentifié** et vérifie ses invariants.
+    ///
+    /// Séparé de [`Index::decrypt`] parce que c'est la surface qu'atteint un
+    /// **vault forgé** : quelqu'un qui choisit sa propre passphrase produit un
+    /// index parfaitement authentifié, et c'est ce décodeur — non
+    /// l'authentification — qui doit alors le refuser. C'est aussi ce qui rend
+    /// cette surface explorable sans avoir à forger un tag (voir le crate
+    /// `fuzz/`).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Corrupted`] si le CBOR est illisible ou si les invariants sont
+    /// violés.
+    pub(crate) fn decode_plain(plaintext: &[u8]) -> Result<Self> {
+        let repr: IndexRepr = ciborium::from_reader(plaintext).map_err(|_| Error::Corrupted)?;
 
         let index = Self {
             index_version: repr.index_version,
