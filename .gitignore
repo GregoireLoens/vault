@@ -9,6 +9,12 @@ target/
 # Cache Cargo du conteneur de développement (bind mount)
 .docker-cache/
 
+# Python — outils de vérification (feature 002). Le code source est versionné ;
+# les artefacts de compilation de l'interpréteur ne le sont pas.
+__pycache__/
+*.py[cod]
+.venv/
+
 # Système / éditeurs
 .DS_Store
 Thumbs.db

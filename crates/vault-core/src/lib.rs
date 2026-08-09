@@ -29,6 +29,11 @@ mod format;
 mod fs;
 mod ops;
 
+// Surfaces de décodage exposées à l'exploration guidée, et à elle seule. Voir
+// le module pour les garde-fous ; une compilation ordinaire ne le contient pas.
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
+
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

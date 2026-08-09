@@ -51,5 +51,9 @@ fs4 = { version = "1.1.0", default-features = false }
 rand = "0.10.2"
 thiserror = "2.0.19"
 
+# Exposée au seul crate `fuzz/`, jamais dans ce qui est livré ni mesuré.
+[features]
+fuzzing = []
+
 [dev-dependencies]
 proptest = "1.11.0"

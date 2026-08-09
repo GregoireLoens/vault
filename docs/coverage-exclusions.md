@@ -9,7 +9,7 @@ inexécutable sur l'exécuteur d'intégration continue.** Une exclusion pour du 
 tester », « peu intéressant » ou « évidemment correct » est interdite. Si un chemin est
 exécutable, il est couvert ; s'il ne l'est pas, il figure ici.
 
-État au 2026-08-08, logiciel en `v0.3.0` : **une seule exclusion**.
+État au 2026-08-08, logiciel en `v1.0.0` : **une seule exclusion**.
 
 ---
 
@@ -51,6 +51,24 @@ pas exclue, elle est absente — et la matrice de tests de l'intégration contin
 
 Le même raisonnement vaut pour `format/path.rs`, qui porte les règles de nommage propres à chaque
 hôte.
+
+### Le code qui n'appartient pas à l'espace de travail mesuré
+
+Deux répertoires contiennent du code exécutable sans figurer dans la mesure :
+
+- **`verification/`** — le déchiffreur indépendant. Il n'est pas écrit en Rust : `cargo llvm-cov`
+  ne peut pas le voir, et il n'y a rien à exclure. Il a sa propre porte, qui échoue si le
+  déchiffrement du vault de référence échoue ;
+- **`fuzz/`** — le harnais d'exploration guidée, **exclu des membres de l'espace de travail**.
+  Instrumenté, il ne se comporte pas comme un crate ordinaire et fausserait la mesure. Son
+  exclusion du périmètre est ce qui permet au seuil de rester à 100 % sans dérogation ;
+  l'intégration continue en vérifie tout de même la compilation, un crate que rien ne compile
+  pourrissant en silence.
+
+**Ce n'est pas la même chose qu'une exclusion.** Une exclusion retire de la mesure du code qui en
+relève ; ici, ce code n'en a jamais relevé. La distinction compte, faute de quoi un lecteur
+conclura que le seuil de 100 % a été assoupli — alors qu'il porte toujours sur exactement le même
+périmètre qu'avant : les deux crates livrés.
 
 ### Les tests conditionnés par la plateforme
 

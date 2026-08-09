@@ -10,6 +10,144 @@ contraire.
 
 ---
 
+## Ce que ces vérifications établissent, et ce qu'elles n'établissent pas
+
+À lire avant tout le reste, parce que la confusion est facile et coûteuse.
+
+**Ce qu'elles établissent :**
+
+- que le format se **décrit** fidèlement — une implémentation écrite depuis le seul
+  `docs/format.md` restitue le contenu d'un vault de référence octet pour octet ;
+- que le logiciel **refuse explicitement** ce qu'il ne comprend pas, y compris des octets que
+  personne n'a choisis ;
+- qu'une livraison peut être **rattachée à son auteur** et reconstruite par un tiers.
+
+**Ce qu'elles n'établissent pas** — et aucune accumulation de tests verts n'y changera rien :
+
+- **Pas la conception cryptographique.** Un déchiffreur indépendant qui restitue le contenu prouve
+  que le document décrit fidèlement ce que le code fait. Il ne dit rien de la question de savoir
+  si ce que le code fait est une bonne idée. Les paramètres de dérivation, l'absence d'engagement
+  de clé, la construction du nonce : tout cela reste à relire par quelqu'un d'autre.
+- **Pas l'absence de défaut.** Une exploration qui ne trouve rien n'établit pas qu'il n'y a rien à
+  trouver. L'étendue de l'effort consenti est consignée plus bas pour que le lecteur en juge
+  lui-même, plutôt que de conclure du silence à la sûreté.
+- **Pas une relecture par un tiers.** Ces vérifications sont écrites par l'auteur du logiciel.
+  Elles réduisent le périmètre et le coût d'un audit externe ; elles ne s'y substituent pas.
+
+Ce paragraphe est écrit **avant** les vérifications qu'il encadre, et non après. Rédigé une fois
+les tests au vert, il se serait transformé en excuse ; écrit d'avance, il fixe ce qu'on a le droit
+de conclure.
+
+---
+
+## Suffisance de la spécification de format — SC-001 à SC-003
+
+Un déchiffreur écrit depuis le seul `docs/format.md`, en Python et avec des primitives génériques,
+restitue le contenu du vault de référence **octet pour octet**. Il tourne à chaque exécution de la
+chaîne d'intégration (`./scripts/dev.sh verifier-format`).
+
+**Le document a tenu.** Aucune erreur ni omission n'a été trouvée dans `docs/format.md` : la
+chaîne complète — en-tête CBOR, Argon2id, contexte public à champs de largeur fixe,
+désenveloppement, index, dérivation BLAKE3, et surtout la **reconstruction de STREAM BE32 à partir
+de la primitive** — s'est écrite directement depuis le texte.
+
+Deux constats tout de même, et le second compte :
+
+- **Le défaut trouvé était dans le déchiffreur, pas dans le document.** `pathlib` refuse les
+  chemins en octets, alors que le format impose de les conserver bruts ; il a fallu passer par
+  `os.path`. C'est un défaut de l'outil de vérification, et il est consigné ici pour que personne
+  ne le compte comme une victoire du document.
+- **`crates/vault-core/tests/fixtures/README.md` était trop vague pour être exploitable.** Il
+  décrivait « un texte accentué, deux lignes », ce qui se lit bien mais **ne permet pas de
+  reconstituer le contenu**. Or c'est précisément ce dont un tiers a besoin. La table est
+  désormais définie à l'octet près, et le contenu attendu en est dérivé — et non de la sortie du
+  logiciel, ce qui reviendrait à croire le logiciel sur parole pour le vérifier.
+
+### La limite, qui doit être lue avec le résultat
+
+Le déchiffreur a été écrit par l'auteur du logiciel, au cours d'une session où le code Rust avait
+déjà été lu. **L'indépendance n'est donc pas celle d'un tiers** : là où le document aurait été
+muet, la connaissance préalable a pu combler le silence sans que rien ne le signale.
+
+Ce que ce résultat établit malgré tout, et qu'aucun test du logiciel ne pouvait établir : le
+document décrit une chaîne **complète et exacte**, reproductible avec d'autres bibliothèques, dans
+un autre langage. Ce qu'il n'établit pas : qu'un lecteur n'ayant jamais vu le code y parviendrait
+sans buter. Cela reste à faire faire par quelqu'un d'autre.
+
+---
+
+## Refus de l'entrée hostile — SC-004, SC-005
+
+Deux dispositifs de nature différente, et non un seul.
+
+### La porte : exploration engendrée, déterministe
+
+`crates/vault-core/tests/hostile.rs` soumet **768 entrées par surface** — en-tête, index, blob,
+chemins — en trois familles : octets arbitraires, structures presque valides lourdement altérées,
+structures valides tronquées. Le générateur part d'une graine figée : la suite explorée est
+exactement la même partout, à chaque exécution. Une porte dont la graine varie devient un
+générateur d'échecs inexpliqués, celui qui voit rouge ne pouvant pas reproduire ce que la machine
+d'en face a vu.
+
+**Deux propriétés y ont été reformulées après un premier échec, et l'erreur était dans l'énoncé,
+pas dans le logiciel :**
+
+- exiger que `Vault::open` échoue sur tout en-tête altéré était **faux**. L'ouverture ne fait que
+  décoder les champs publics et n'authentifie rien — c'est documenté, et c'est ce qui permet à
+  `vault info` de travailler sans passphrase. La propriété juste est plus forte : *si* une entrée
+  hostile mène jusqu'à une session ouverte, le contenu de cette session doit être **le bon** ;
+- exiger que toute altération de blob fasse échouer l'extraction était **faux** aussi. Le
+  remplissage n'est ni déchiffré ni interprété (VR-B3) : l'altérer laisse légitimement
+  l'extraction aboutir. La propriété juste : ou bien l'extraction échoue **sans rien écrire**, ou
+  bien elle aboutit et restitue le contenu d'origine octet pour octet. Le troisième cas — aboutir
+  sur des données altérées — est le seul interdit.
+
+`crates/vault-core/tests/regressions.rs` rejoue en permanence les entrées ayant compté. Aucune
+campagne n'ayant encore révélé de défaut, il est amorcé avec les cas limites que le développement
+a rencontrés — dont le nom de blob multi-octets, qui fait paniquer un découpage naïf de chaîne
+hexadécimale.
+
+### Les campagnes : exploration guidée par la couverture
+
+Menées hors ligne, avec `cargo-afl` sur chaîne **stable** — introduire une chaîne *nightly* aurait
+rompu la reproductibilité tenue depuis le premier commit.
+
+Campagne initiale du 2026-08-08, **60 secondes par surface** :
+
+| Surface | Exécutions | Vitesse | Chemins découverts | Plantages | Blocages |
+|---|---|---|---|---|---|
+| En-tête | 1 555 129 | 25 917/s | 1 237 | **0** | **0** |
+| Index authentifié | 2 016 634 | 33 608/s | 986 | **0** | **0** |
+| Chemins | 2 490 482 | 41 507/s | 71 | **0** | **0** |
+
+Soit environ **six millions d'exécutions**, sans un seul plantage ni blocage.
+
+**Ce que cela n'établit pas.** Soixante secondes par surface est une campagne **courte** : elle
+écarte les défauts qui se trouvent vite, pas ceux qui demandent des heures. Les 1 237 chemins
+découverts sur l'en-tête montrent d'ailleurs que l'exploration était encore en train de progresser
+quand elle s'est arrêtée. L'absence de découverte n'est donc pas une preuve d'absence de défaut,
+et ce tableau est publié pour que le lecteur en juge lui-même plutôt que de conclure du silence à
+la sûreté.
+
+**Comment relancer**, une fois pour toutes l'outil installé dans le montage persistant :
+
+```bash
+./scripts/dev.sh --net bash -c 'cargo install --locked cargo-afl@0.18.2 && cargo afl config --build'
+./scripts/dev.sh bash -c 'cd fuzz && cargo afl build --release'
+./scripts/dev.sh bash -c 'cd fuzz && AFL_SKIP_CPUFREQ=1 AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \
+  cargo afl fuzz -i corpus/entete -o /tmp/afl -V 3600 target/release/entete'
+```
+
+Toute entrée fautive rejoint `regressions.rs` **avant même** que le défaut soit corrigé : versée
+après, elle risque de ne jamais l'être.
+
+**Une conséquence de l'exclusion, à ne pas taire** : `fuzz/` étant hors de l'espace de travail,
+`cargo deny` ne voit pas sa dépendance `afl` — la porte d'approvisionnement porte sur ce qui est
+livré, et ce crate ne l'est pas. La contrepartie est que cette dépendance-là n'est vérifiée par
+aucun outil ; elle est figée par version, comme le reste, et n'entre dans aucun binaire.
+
+---
+
 ## SC-010 — 4 Go sous 2 Go de mémoire
 
 Exécuté sous limite mémoire imposée par le noyau, `./scripts/dev.sh --mem 2g`, en profil
@@ -125,6 +263,90 @@ octet pour octet** avant et après — la formulation exacte de « ne réécrit 
 **Écart de rattachement** : le scénario est étiqueté SC-008, qui porte sur la compatibilité
 ascendante et non sur le changement de passphrase. SC-008 est vérifié par `compat.rs`, qui ouvre
 des vaults de référence figés que le logiciel d'aujourd'hui n'a pas produits.
+
+---
+
+### Les sept scénarios de vérification, déroulés
+
+| Scénario | Résultat |
+|---|---|
+| 1 — déchiffrer sans vault | 4 fichiers restitués octet pour octet |
+| 2 — passphrase erronée | échec au désenveloppement, **rien d'écrit** |
+| 3 — vecteurs publiés | 5 vérifications vertes, publiques et secrètes |
+| 4 — entrée hostile | 5 suites vertes, 768 entrées par surface |
+| 5 — corpus rejoué sans exploration | 4 suites vertes |
+| 6 — provenance | reconstruction déterministe, signature vérifiée hors forge |
+| 7 — signalement | `SECURITY.md` à la racine, canal et délais annoncés |
+
+**Un écart, dans le quickstart lui-même** : les scénarios 3 à 5 y étaient écrits
+`cargo test --workspace --all-targets <mot>`, ce qui filtre les **noms de tests** et non les
+binaires. Aucun test de `regressions.rs` ne contenant le mot « regressions », la commande
+rapportait « 0 passed » — c'est-à-dire un succès sans avoir rien exécuté. La forme juste est
+`cargo test -p vault-core --test regressions`.
+
+C'est le même défaut que celui relevé au scénario 2 du quickstart de `001-vault-core` : une
+commande de vérification qui ne peut pas échouer. Elle est d'autant plus trompeuse ici qu'elle
+affiche `ok`.
+
+---
+
+## Provenance des livraisons — SC-006, SC-007
+
+**Reconstruction.** Depuis la même image et la même architecture, deux compilations successives —
+la seconde après effacement complet des artefacts — produisent la **même empreinte au bit près** :
+`6728fa10…a862a0` pour `vault-cli` en profil de publication. Ce n'est pas une espérance, c'est un
+constat reproduit. La chaîne figée, le `Cargo.lock` versionné et la neutralisation du chemin de
+compilation y suffisent.
+
+Le drapeau `--remap-path-prefix` a d'abord été placé dans `.cargo/config.toml`, puis retiré :
+appliqué à **toutes** les compilations, il perturbait l'instrumentation de couverture et faisait
+tomber le seuil à 99,53 %. Il appartient à la commande de reconstruction, pas à la configuration
+du dépôt.
+
+**Signature.** La chaîne a été déroulée de bout en bout, pas seulement décrite : un tag signé se
+vérifie hors de la forge avec le fichier de signataires versionné (code `0`), une clé étrangère
+est refusée (code `1`), un fichier vide aussi.
+
+Un piège a été trouvé à cette occasion et documenté dans
+[`reconstruction.md`](reconstruction.md) : **`git` affiche « Good signature » même lorsque la clé
+n'est pas autorisée.** Seules la ligne « No principal matched » et le code de retour font foi. Un
+vérificateur pressé qui s'arrête à la première ligne n'a rien vérifié — c'est exactement le genre
+de détail qui rend une procédure inutile s'il n'est pas écrit.
+
+---
+
+## Ce qui reste à confier à une relecture externe
+
+Énoncé ici pour qu'une demande de devis puisse être faite **sans étude préalable**. Le périmètre
+ci-dessous est ce que le projet ne peut pas se délivrer à lui-même.
+
+**Volume** : deux crates Rust, environ 5 700 lignes couvertes, sans `unsafe`. Le format tient en un
+document de quelque quatre cents lignes, avec vecteurs de test et procédure de déchiffrement pas à
+pas — un relecteur n'a pas à reconstituer le format depuis le code.
+
+**Ce qui est déjà écarté**, et n'a donc pas à être payé :
+
+- la fidélité de la spécification au comportement réel — établie par le déchiffreur indépendant ;
+- le refus de l'entrée hostile sur les quatre surfaces de décodage — établi par la porte et les
+  campagnes ;
+- l'absence de fuite en clair, la détection d'altération, l'atomicité, la compatibilité ascendante
+  — établies par les suites bloquantes depuis `v1.0.0` ;
+- l'absence de dépendance réseau, même transitive.
+
+**Ce qui reste**, et qui demande un regard extérieur compétent :
+
+| Question | Pourquoi elle ne se répond pas ici |
+|---|---|
+| Les paramètres Argon2id retenus — 128 Mio, 3 passes, parallélisme 4 — sont-ils au niveau des recommandations actuelles ? | Un choix de coût se juge contre l'état de l'art d'une attaque, pas contre un test |
+| L'absence d'**engagement de clé** de XChaCha20-Poly1305 sur le désenveloppement de la clé maîtresse importe-t-elle dans ce modèle de menace ? | Question de conception, pas de comportement |
+| La construction du nonce STREAM et la dérivation par blob sont-elles correctement composées ? | Les tests montrent qu'elles sont cohérentes avec elles-mêmes, pas qu'elles sont sûres |
+| Le remplissage par paliers de 10 % laisse-t-il fuir davantage qu'annoncé sur un corpus réel ? | Demande une analyse statistique, pas une assertion |
+| Le modèle de menace omet-il quelque chose ? | Par construction, on ne voit pas ce qu'on n'a pas pensé |
+
+**Pistes de financement**, pour un projet libre sans revenu : les programmes européens de type
+NGI Zero financent des audits de sécurité pour les logiciels libres de confidentialité. Un audit
+commercial ciblé sur ce périmètre se situe, pour ce volume, dans un ordre de grandeur de quelques
+dizaines de milliers d'euros.
 
 ---
 

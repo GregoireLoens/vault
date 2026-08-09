@@ -1,0 +1,45 @@
+# Harnais d'exploration guidée — 002, T023
+#
+# Exclu de l'espace de travail (voir la racine) : instrumenté, il fausserait la
+# mesure de couverture dont le seuil à 100 % est bloquant. Ce n'est pas une
+# dérogation de couverture — ce crate n'a jamais relevé du périmètre mesuré.
+#
+# `cargo-afl` fonctionne sur chaîne **stable**. C'est ce qui permet à ce crate
+# d'exister sans introduire de chaîne *nightly*, qui romprait la
+# reproductibilité que le projet s'impose depuis son premier commit.
+[package]
+name = "vault-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = false
+
+[dependencies]
+afl = "0.16"
+vault-core = { path = "../crates/vault-core", features = ["fuzzing"] }
+
+[[bin]]
+name = "entete"
+path = "fuzz_targets/entete.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "index"
+path = "fuzz_targets/index.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "chemin"
+path = "fuzz_targets/chemin.rs"
+test = false
+doc = false
+
+# Le profil de mise au point garde les assertions : une panique est précisément
+# ce que l'exploration cherche.
+[profile.release]
+debug-assertions = true
+overflow-checks = true

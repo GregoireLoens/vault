@@ -266,6 +266,45 @@ Autrement dit : passer de `v0.3.0` à `v0.4.0` ne rend jamais vos vaults illisib
 
 ---
 
+## Vérifiabilité — ce que vous pouvez contrôler vous-même
+
+Un logiciel de chiffrement qui demande qu'on le croie sur parole ne vaut pas mieux qu'une promesse.
+Voici ce qui se vérifie sans nous faire confiance.
+
+**Le format se suffit à lui-même.** Un déchiffreur écrit depuis le seul
+[`docs/format.md`](docs/format.md), dans un autre langage et avec des bibliothèques
+cryptographiques courantes, restitue le contenu d'un vault octet pour octet. Il vit dans
+[`verification/dechiffreur/`](verification/dechiffreur/) et tourne à chaque intégration. La
+spécification publie en outre des **vecteurs de test** — valeurs intermédiaires de la chaîne de
+dérivation — qui vous permettent de situer l'étape exacte où votre propre implémentation
+divergerait, sans exécuter vault.
+
+**Le logiciel refuse ce qu'il ne comprend pas.** Chaque intégration soumet aux décodeurs des
+centaines d'entrées que personne n'a choisies ; des campagnes d'exploration guidée s'y ajoutent
+hors ligne. L'étendue exacte de ce qui a été exploré — et ce que cela n'établit pas — est consignée
+dans [`docs/verifications.md`](docs/verifications.md).
+
+**Le binaire correspond au code, et la livraison vient de son auteur.**
+[`docs/reconstruction.md`](docs/reconstruction.md) donne les deux marches à suivre : reconstruire
+et comparer — avec le critère qui distingue une divergence attendue d'une divergence suspecte,
+sans quoi constater un écart ne permettrait de conclure ni dans un sens ni dans l'autre — puis
+vérifier la signature du tag hors de la forge. Les livraisons sont signées **à partir de
+`v1.1.0`** ; les précédentes ne le sont pas, et le document dit pourquoi.
+
+**Une faille se signale en privé.** Voir [`SECURITY.md`](SECURITY.md) : canal non public, accusé de
+réception sous 7 jours, divulgation coordonnée à 90 jours, et la liste de ce qui **n'est pas** une
+faille au sens de ce projet.
+
+### Ce que rien de tout cela ne remplace
+
+**Aucun tiers n'a relu la conception cryptographique.** Les vérifications ci-dessus établissent que
+le format est fidèlement décrit et que le logiciel refuse proprement ce qu'il ne comprend pas.
+Elles ne disent rien de la question de savoir si les choix de conception sont les bons — le coût
+Argon2id retenu, l'absence d'engagement de clé, la construction du nonce. Cela demande d'autres
+yeux que les nôtres, et cela manque.
+
+---
+
 ## Comment le projet est tenu
 
 vault est développé sous une **constitution** de huit principes non négociables. Trois d'entre eux

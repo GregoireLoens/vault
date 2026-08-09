@@ -372,6 +372,95 @@ peut l'ignorer.
 
 ---
 
+## 7 bis. Vecteurs de test
+
+Les valeurs ci-dessous sont celles du **vault de référence** conservé dans
+`crates/vault-core/tests/fixtures/v1/`. Elles permettent à une implémentation tierce de situer
+l'étape exacte où elle diverge, **sans exécuter vault** : il suffit de comparer, étape par étape,
+ce qu'elle obtient à ce qui suit.
+
+> ⚠ **Ces valeurs appartiennent à un vault dont la passphrase est publique et qui ne protège
+> rien.** Ce n'est pas un exemple à imiter : ses paramètres de dérivation sont volontairement
+> minimaux pour que la suite de tests reste rapide, et un vault réel emploie ceux de la §3.
+
+Passphrase : `vault fixture v1 passphrase de reference`, soit en UTF-8 :
+
+```text
+7661756c7420666978747572652076312070617373706872617365206465207265666572656e6365   (40 o)
+```
+
+### Champs publics de l'en-tête
+
+| Champ | Valeur |
+|---|---|
+| `format_version` | `1` |
+| `kdf_salt` | `bdfaa6979ddb4e6f23ce5c8615aaedcd` (16 o) |
+| `kdf_memory_kib` | `64` |
+| `kdf_iterations` | `1` |
+| `kdf_parallelism` | `1` |
+
+### Chaîne de dérivation
+
+Clé d'enveloppe, par Argon2id (§4.1) :
+
+```text
+7bb28f039c531ddc0ee414e4fa5f1648e81060cb2a6da3a894a58f6582b5e15e   (32 o)
+```
+
+Contexte public (§4.2), 65 octets — c'est ici qu'une description approximative se paie le plus
+cher, d'où sa publication in extenso :
+
+```text
+5641554c54464d54 00000001 6172676f6e326964 bdfaa6979ddb4e6f23ce5c8615aaedcd
+00000040 00000001 00000001 786368616368613230706f6c7931333035
+```
+
+Données associées du désenveloppement, soit `"vault master key v1" ‖ contexte_public`, 84 octets :
+
+```text
+7661756c74206d6173746572206b6579207631
+5641554c54464d54000000016172676f6e326964bdfaa6979ddb4e6f23ce5c8615aaedcd
+000000400000000100000001786368616368613230706f6c7931333035
+```
+
+Clé maîtresse obtenue :
+
+```text
+3b2930a56bd1030f685292e07ddcc985fa2aace1961583da49260db2d5905b41   (32 o)
+```
+
+### Une entrée témoin
+
+Pour l'entrée `lisez-moi.txt`, de `size` 67 :
+
+| Élément | Valeur |
+|---|---|
+| `blob_id` | `64a8f329ed76ed598354b07483b2dca8a2bd700eb09e08df17b3fac6d7b81d80` |
+| Clé du blob (§4.3) | `24bd88c76e17e3bb676e183c8ce5369410168e186bb998e131d5e2bb7a0875f7` |
+| Données associées (§6.2) | `7661756c7420626c6f622076 31` ‖ `blob_id`, soit 45 o |
+| Nonce STREAM, en tête du blob | `5174be637c527dbea15f84a55487b1b3afc790` (19 o) |
+| Nonce complet du morceau 0 | `5174be637c527dbea15f84a55487b1b3afc790` ‖ `00000000` ‖ `01` (24 o) |
+| `blob_padded_size` | `4096` |
+
+Le contenu tenant en un seul morceau, celui-ci est **le dernier** : son drapeau vaut `01`.
+
+### Ce que ces vecteurs garantissent
+
+Ils sont vérifiés automatiquement contre le logiciel à chaque exécution de la suite de tests. Une
+divergence entre ce document et le code fait échouer la chaîne d'intégration — c'est ce qui
+empêche cette section de vieillir en silence.
+
+Ils sont par ailleurs calculés par une **implémentation indépendante**, écrite depuis ce seul
+document (`verification/dechiffreur/`), et non par le logiciel : des vecteurs produits par le code
+qu'ils servent à vérifier ne vérifieraient rien.
+
+**Limite de cette vérification, énoncée franchement** : un déchiffreur écrit par l'auteur du
+logiciel valide la **suffisance de ce document** — il établit qu'un tiers peut s'en servir pour
+déchiffrer. Il ne valide **pas** la conception cryptographique elle-même, qui reste à relire par
+quelqu'un d'autre.
+
+---
+
 ## 8. Procédure de déchiffrement complète
 
 Pour extraire un fichier d'un vault sans exécuter vault :
