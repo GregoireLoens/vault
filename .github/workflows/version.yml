@@ -1,0 +1,75 @@
+# Porte du numéro de version
+#
+# Le nom de job ci-dessous est à cocher dans la règle « Require status checks to
+# pass before merging » du ruleset protégeant `main`. Non coché, ce fichier ne
+# bloque rien : il produit une pastille verte ou rouge que personne n'attend.
+#
+# Aucune action tierce, comme dans ci.yml.
+#
+# Deux moments, et ils ne se valent pas :
+#
+#   - sur une pull request dont la branche est `release/vX.Y.Z`, la porte BLOQUE.
+#     C'est le seul instant où l'erreur se corrige sans conséquence, par un
+#     commit de plus sur la branche ;
+#   - sur le `push` d'un tag, elle ALERTE, trop tard pour empêcher quoi que ce
+#     soit. Corriger supposerait alors de déplacer le tag, ce que la politique de
+#     signature interdit. Elle sert à ce que le défaut se voie, plutôt que de
+#     dormir dans une livraison publiée.
+#
+# Sur toute autre pull request, le job réussit sans rien vérifier. C'est
+# délibéré : un contrôle exigé par le ruleset doit exister sur chaque PR, sans
+# quoi les PR ordinaires resteraient bloquées sur un contrôle qui ne vient
+# jamais.
+
+name: Version
+
+on:
+  pull_request:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Version de livraison
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérifier que les numéros suivent la livraison
+        # Le nom de branche et le nom de tag passent par l'environnement et non
+        # par une interpolation dans le corps du script : ils sont choisis par
+        # qui ouvre la pull request, y compris depuis un fork. Interpolés, ils
+        # seraient du shell exécuté avec le jeton de l'exécuteur.
+        env:
+          EVENEMENT: ${{ github.event_name }}
+          BRANCHE: ${{ github.head_ref }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENEMENT" = "push" ]; then
+              attendue="${TAG#v}"
+              echo "Tag $TAG — vérification après coup."
+          else
+              case "$BRANCHE" in
+                  release/v*)
+                      attendue="${BRANCHE#release/v}"
+                      echo "Branche de livraison $BRANCHE — vérification bloquante."
+                      ;;
+                  *)
+                      echo "Cette pull request ne prépare pas de livraison."
+                      echo "Rien à vérifier : les numéros de version ne bougent qu'en release/vX.Y.Z."
+                      exit 0
+                      ;;
+              esac
+          fi
+
+          ./scripts/verifier-version.sh "$attendue"
