@@ -288,10 +288,12 @@ spécification publie en outre des **vecteurs de test** — valeurs intermédiai
 dérivation — qui vous permettent de situer l'étape exacte où votre propre implémentation
 divergerait, sans exécuter vault.
 
-**Le logiciel refuse ce qu'il ne comprend pas.** Chaque intégration soumet aux décodeurs des
-centaines d'entrées que personne n'a choisies ; des campagnes d'exploration guidée s'y ajoutent
-hors ligne. L'étendue exacte de ce qui a été exploré — et ce que cela n'établit pas — est consignée
-dans [`docs/verifications.md`](docs/verifications.md).
+**Le logiciel refuse ce qu'il ne comprend pas.** Chaque intégration rejoue un corpus permanent
+d'entrées hostiles sur les quatre surfaces de décodage, et vérifie qu'aucune altération ne passe.
+L'exploration engendrée et les campagnes guidées qui complétaient ce corpus **ont été retirées le
+2026-08-09** : ce qui subsiste rejoue ce qui a déjà compté, et ne découvre rien de neuf. L'étendue
+exacte de ce qui a été exploré — et ce que cela n'établit pas — est consignée dans
+[`docs/verifications.md`](docs/verifications.md).
 
 **Le binaire correspond au code, et la livraison vient de son auteur.**
 [`docs/reconstruction.md`](docs/reconstruction.md) donne les deux marches à suivre : reconstruire

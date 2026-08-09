@@ -78,19 +78,27 @@ sans buter. Cela reste à faire faire par quelqu'un d'autre.
 
 ## Refus de l'entrée hostile — SC-004, SC-005
 
-Deux dispositifs de nature différente, et non un seul.
+**L'exploration hostile a été retirée du dépôt le 2026-08-09**, sur décision de l'auteur :
+`crates/vault-core/tests/hostile.rs`, le crate `fuzz/`, le module `vault-core::fuzzing` et la porte
+« Harnais d'exploration » n'existent plus. Les portes d'intégration continue passent de huit à
+sept. Ce paragraphe reste pour qu'un lecteur qui trouve le dispositif mentionné ailleurs — dans
+`v1.1.0`, dans les spécifications de la feature 002 — sache qu'il a existé et où il est parti.
 
-### La porte : exploration engendrée, déterministe
+### Ce qui subsiste
 
-`crates/vault-core/tests/hostile.rs` soumet **768 entrées par surface** — en-tête, index, blob,
-chemins — en trois familles : octets arbitraires, structures presque valides lourdement altérées,
-structures valides tronquées. Le générateur part d'une graine figée : la suite explorée est
-exactement la même partout, à chaque exécution. Une porte dont la graine varie devient un
-générateur d'échecs inexpliqués, celui qui voit rouge ne pouvant pas reproduire ce que la machine
-d'en face a vu.
+- `crates/vault-core/tests/regressions.rs` — le corpus permanent d'entrées hostiles (T022,
+  FR-011), rejoué à chaque exécution. Aucune campagne n'ayant révélé de défaut, il est amorcé avec
+  les cas limites rencontrés au développement — dont le nom de blob multi-octets, qui fait paniquer
+  un découpage naïf de chaîne hexadécimale ;
+- `crates/vault-core/tests/tamper.rs` — la détection d'altération sur les quatre surfaces, sept
+  suites, inchangée ;
+- l'exploration `proptest` de `roundtrip.rs` sur les noms hostiles, les tailles et les profondeurs.
 
-**Deux propriétés y ont été reformulées après un premier échec, et l'erreur était dans l'énoncé,
-pas dans le logiciel :**
+Ces trois-là relèvent de la porte « Suite de tests complète au vert » et restent bloquants.
+
+**Deux propriétés avaient été reformulées après un premier échec du dispositif retiré, et l'erreur
+était dans l'énoncé, pas dans le logiciel.** Elles sont conservées ici parce qu'elles décrivent le
+comportement du logiciel, qui n'a pas changé :
 
 - exiger que `Vault::open` échoue sur tout en-tête altéré était **faux**. L'ouverture ne fait que
   décoder les champs publics et n'authentifie rien — c'est documenté, et c'est ce qui permet à
@@ -102,17 +110,12 @@ pas dans le logiciel :**
   bien elle aboutit et restitue le contenu d'origine octet pour octet. Le troisième cas — aboutir
   sur des données altérées — est le seul interdit.
 
-`crates/vault-core/tests/regressions.rs` rejoue en permanence les entrées ayant compté. Aucune
-campagne n'ayant encore révélé de défaut, il est amorcé avec les cas limites que le développement
-a rencontrés — dont le nom de blob multi-octets, qui fait paniquer un découpage naïf de chaîne
-hexadécimale.
+### Les campagnes menées, et qui ne sont plus rejouables
 
-### Les campagnes : exploration guidée par la couverture
-
-Menées hors ligne, avec `cargo-afl` sur chaîne **stable** — introduire une chaîne *nightly* aurait
-rompu la reproductibilité tenue depuis le premier commit.
-
-Campagne initiale du 2026-08-08, **60 secondes par surface** :
+Le tableau ci-dessous est un **constat historique**. Il a été obtenu hors ligne avec `cargo-afl`
+sur chaîne stable, le 2026-08-08, **60 secondes par surface**, sur du code que `v1.1.0` contient et
+que la présente version ne contient plus. **Le harnais ayant été supprimé, ces mesures ne peuvent
+plus être reproduites depuis ce dépôt** — il faudrait le reconstruire, ou repartir de `v1.1.0`.
 
 | Surface | Exécutions | Vitesse | Chemins découverts | Plantages | Blocages |
 |---|---|---|---|---|---|
@@ -122,29 +125,16 @@ Campagne initiale du 2026-08-08, **60 secondes par surface** :
 
 Soit environ **six millions d'exécutions**, sans un seul plantage ni blocage.
 
-**Ce que cela n'établit pas.** Soixante secondes par surface est une campagne **courte** : elle
-écarte les défauts qui se trouvent vite, pas ceux qui demandent des heures. Les 1 237 chemins
-découverts sur l'en-tête montrent d'ailleurs que l'exploration était encore en train de progresser
-quand elle s'est arrêtée. L'absence de découverte n'est donc pas une preuve d'absence de défaut,
-et ce tableau est publié pour que le lecteur en juge lui-même plutôt que de conclure du silence à
-la sûreté.
+**Ce que cela n'établissait pas déjà.** Soixante secondes par surface est une campagne **courte** :
+elle écarte les défauts qui se trouvent vite, pas ceux qui demandent des heures. Les 1 237 chemins
+découverts sur l'en-tête montrent que l'exploration était encore en train de progresser quand elle
+s'est arrêtée. L'absence de découverte n'était donc pas une preuve d'absence de défaut. Ce tableau
+reste publié pour que le lecteur en juge lui-même, et non pour conclure du silence à la sûreté.
 
-**Comment relancer**, une fois pour toutes l'outil installé dans le montage persistant :
-
-```bash
-./scripts/dev.sh --net bash -c 'cargo install --locked cargo-afl@0.18.2 && cargo afl config --build'
-./scripts/dev.sh bash -c 'cd fuzz && cargo afl build --release'
-./scripts/dev.sh bash -c 'cd fuzz && AFL_SKIP_CPUFREQ=1 AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \
-  cargo afl fuzz -i corpus/entete -o /tmp/afl -V 3600 target/release/entete'
-```
-
-Toute entrée fautive rejoint `regressions.rs` **avant même** que le défaut soit corrigé : versée
-après, elle risque de ne jamais l'être.
-
-**Une conséquence de l'exclusion, à ne pas taire** : `fuzz/` étant hors de l'espace de travail,
-`cargo deny` ne voit pas sa dépendance `afl` — la porte d'approvisionnement porte sur ce qui est
-livré, et ce crate ne l'est pas. La contrepartie est que cette dépendance-là n'est vérifiée par
-aucun outil ; elle est figée par version, comme le reste, et n'entre dans aucun binaire.
+**Ce que le retrait coûte, à ne pas taire** : il n'existe plus, dans ce dépôt, de moyen de chercher
+un défaut que personne n'a imaginé sur les surfaces de décodage. Le corpus permanent rejoue ce qui
+a déjà compté ; il ne découvre rien. C'est un des points que la relecture externe devra désormais
+couvrir — la dernière section en tient compte.
 
 ---
 
@@ -273,7 +263,7 @@ des vaults de référence figés que le logiciel d'aujourd'hui n'a pas produits.
 | 1 — déchiffrer sans vault | 4 fichiers restitués octet pour octet |
 | 2 — passphrase erronée | échec au désenveloppement, **rien d'écrit** |
 | 3 — vecteurs publiés | 5 vérifications vertes, publiques et secrètes |
-| 4 — entrée hostile | 5 suites vertes, 768 entrées par surface |
+| 4 — entrée hostile | 5 suites vertes, 768 entrées par surface *(dispositif retiré depuis)* |
 | 5 — corpus rejoué sans exploration | 4 suites vertes |
 | 6 — provenance | reconstruction déterministe, signature vérifiée hors forge |
 | 7 — signalement | `SECURITY.md` à la racine, canal et délais annoncés |
@@ -327,8 +317,6 @@ pas — un relecteur n'a pas à reconstituer le format depuis le code.
 **Ce qui est déjà écarté**, et n'a donc pas à être payé :
 
 - la fidélité de la spécification au comportement réel — établie par le déchiffreur indépendant ;
-- le refus de l'entrée hostile sur les quatre surfaces de décodage — établi par la porte et les
-  campagnes ;
 - l'absence de fuite en clair, la détection d'altération, l'atomicité, la compatibilité ascendante
   — établies par les suites bloquantes depuis `v1.0.0` ;
 - l'absence de dépendance réseau, même transitive.
@@ -342,6 +330,7 @@ pas — un relecteur n'a pas à reconstituer le format depuis le code.
 | La construction du nonce STREAM et la dérivation par blob sont-elles correctement composées ? | Les tests montrent qu'elles sont cohérentes avec elles-mêmes, pas qu'elles sont sûres |
 | Le remplissage par paliers de 10 % laisse-t-il fuir davantage qu'annoncé sur un corpus réel ? | Demande une analyse statistique, pas une assertion |
 | Le modèle de menace omet-il quelque chose ? | Par construction, on ne voit pas ce qu'on n'a pas pensé |
+| Les quatre surfaces de décodage résistent-elles à une entrée que personne n'a imaginée ? | L'exploration engendrée et les campagnes guidées ont été retirées du dépôt le 2026-08-09 ; le corpus permanent rejoue ce qui a déjà compté, il ne découvre rien |
 
 **Pistes de financement**, pour un projet libre sans revenu : les programmes européens de type
 NGI Zero financent des audits de sécurité pour les logiciels libres de confidentialité. Un audit
