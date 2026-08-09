@@ -118,16 +118,24 @@ s'arrête à « Good signature » n'a **rien vérifié du tout**.
 
 ### Ce qui a été éprouvé
 
-La chaîne complète a été déroulée, et pas seulement décrite :
+La chaîne complète a été déroulée, et pas seulement décrite. Les quatre cas ci-dessous l'ont été
+**sur `v1.1.0`**, le tag publié — et non sur un tag d'essai qui aurait quitté la machine de
+l'auteur sans que personne puisse le refaire :
 
 | Cas | Résultat |
 |---|---|
 | Tag signé, fichier de signataires du dépôt | `Good "git" signature`, code `0` |
 | Même tag, fichier contenant une **autre** clé | `No principal matched`, code `1` |
 | Même tag, fichier de signataires **vide** | code `1` |
+| Depuis un **clone neuf**, sans configuration locale | code `0` |
 
-Le second cas est celui qui compte : il établit que le fichier de signataires est réellement
-consulté, et non décoratif.
+Le deuxième cas est celui qui compte : il établit que le fichier de signataires est réellement
+consulté, et non décoratif. Le quatrième écarte l'autre soupçon, celui d'une vérification qui ne
+réussirait que sur le poste où la clé est installée.
+
+Vous pouvez rejouer les quatre. Le premier et le dernier demandent le seul dépôt ; les deux du
+milieu se fabriquent en une ligne, en substituant au fichier du dépôt une clé quelconque puis un
+fichier vide.
 
 ### Le sort des livraisons déjà publiées
 
@@ -136,8 +144,9 @@ déplacer, ce qui casserait les références existantes — et une signature app
 n'atteste de toute façon pas grand-chose sur les conditions dans lesquelles la version a été
 produite.
 
-**La politique s'applique à partir de `v1.1.0`.** C'est dit ici pour qu'un tiers ne conclue pas à
-une anomalie en constatant l'absence de signature sur les versions antérieures.
+**La politique s'applique à partir de `v1.1.0`**, qui est le premier tag signé du projet. C'est dit
+ici pour qu'un tiers ne conclue pas à une anomalie en constatant l'absence de signature sur les
+versions antérieures.
 
 ### Ce que la signature n'établit pas
 

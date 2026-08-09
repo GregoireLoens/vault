@@ -259,6 +259,11 @@ migration documenté.
 
 Autrement dit : passer de `v0.3.0` à `v0.4.0` ne rend jamais vos vaults illisibles.
 
+Le numéro qu'annonce `vault --version` est vérifié contre celui de la livraison, par une porte
+d'intégration et par [`scripts/verifier-version.sh`](scripts/verifier-version.sh). Ce n'est pas
+une précaution abstraite : les tags `v0.1.0` à `v0.4.0` ont été posés sur un binaire qui
+s'annonçait en `0.1.0`. Savoir quelle version on exécute est le préalable de toute vérification.
+
 | Tag | Contenu |
 |---|---|
 | `v0.1.0` | Format, cryptographie, et user story 1 — créer, ajouter, lister, extraire |
