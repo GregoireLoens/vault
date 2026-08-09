@@ -2,9 +2,6 @@
 [workspace]
 resolver = "3"
 members = ["crates/vault-core", "crates/vault-cli"]
-# Le harnais d'exploration est instrumenté : membre de l'espace de travail, il
-# fausserait la mesure de couverture, dont le seuil à 100 % est bloquant.
-exclude = ["fuzz"]
 
 [workspace.package]
 edition = "2024"

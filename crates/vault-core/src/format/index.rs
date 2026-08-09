@@ -230,9 +230,7 @@ impl Index {
     /// Séparé de [`Index::decrypt`] parce que c'est la surface qu'atteint un
     /// **vault forgé** : quelqu'un qui choisit sa propre passphrase produit un
     /// index parfaitement authentifié, et c'est ce décodeur — non
-    /// l'authentification — qui doit alors le refuser. C'est aussi ce qui rend
-    /// cette surface explorable sans avoir à forger un tag (voir le crate
-    /// `fuzz/`).
+    /// l'authentification — qui doit alors le refuser.
     ///
     /// # Errors
     ///

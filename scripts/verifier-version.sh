@@ -47,15 +47,11 @@ version_du_verrou() {
     ' "$1"
 }
 
-# Le verrou de fuzz/ compte : le crate est hors de l'espace de travail, donc
-# aucune porte de compilation ne le remet à jour. Oublié, il épingle l'ancienne
-# version et la voit changer sous lui à la prochaine campagne.
 declare -a sujets=(
     "crates/vault-core/Cargo.toml|$(version_du_manifeste crates/vault-core/Cargo.toml)"
     "crates/vault-cli/Cargo.toml|$(version_du_manifeste crates/vault-cli/Cargo.toml)"
     "Cargo.lock (vault-core)|$(version_du_verrou Cargo.lock vault-core)"
     "Cargo.lock (vault-cli)|$(version_du_verrou Cargo.lock vault-cli)"
-    "fuzz/Cargo.lock (vault-core)|$(version_du_verrou fuzz/Cargo.lock vault-core)"
 )
 
 echo "Version attendue : $attendue"
@@ -90,4 +86,4 @@ if (( ecarts > 0 )); then
     echo "Un numéro qui ne suit pas le tag fait mentir \`vault --version\`." >&2
     exit 1
 fi
-echo "Les cinq numéros valent $attendue."
+echo "Les quatre numéros valent $attendue."
