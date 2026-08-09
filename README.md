@@ -117,15 +117,23 @@ construit depuis le `Dockerfile` du dépôt, à version figée.
 Toutes les autres commandes s'exécutent **sans accès réseau** : l'interdiction du réseau n'est pas
 déclarative, le conteneur n'a matériellement pas d'interface.
 
-Les six portes de qualité, toutes bloquantes :
+Les sept portes de qualité, toutes bloquantes :
 
 ```bash
 ./scripts/dev.sh cargo fmt --all --check
 ./scripts/dev.sh cargo clippy --workspace --all-targets --all-features
 ./scripts/dev.sh env RUSTFLAGS=-Dwarnings cargo build --workspace --all-targets
 ./scripts/dev.sh cargo test --workspace --all-targets
-./scripts/dev.sh coverage        # couverture de lignes, seuil bloquant à 100 %
-./scripts/dev.sh deny            # aucune dépendance réseau, même transitive
+./scripts/dev.sh coverage         # couverture de lignes, seuil bloquant à 100 %
+./scripts/dev.sh deny             # aucune dépendance réseau, même transitive
+./scripts/dev.sh verifier-format  # le déchiffreur indépendant sur le vault de référence
+```
+
+S'y ajoute la porte de livraison, de portée plus étroite : elle ne bloque que les pull requests
+`release/vX.Y.Z`, et vérifie que les numéros de version suivent la livraison préparée.
+
+```bash
+./scripts/verifier-version.sh 1.1.0   # bash seul, aucune chaîne d'outils
 ```
 
 ---
@@ -325,10 +333,11 @@ se voient de l'extérieur :
   les assemble et n'en écrit aucune.
 - **Le format est auto-descriptif.** Tout ce qui est nécessaire au déchiffrement figure en clair
   dans l'en-tête. Aucun paramètre n'est codé en dur dans le logiciel.
-- **Aucune régression non détectée.** Six portes bloquent chaque fusion : formatage, analyse
+- **Aucune régression non détectée.** Sept portes bloquent chaque fusion : formatage, analyse
   statique sans le moindre avertissement, compilation sans avertissement, tests, **couverture de
-  lignes à 100 %**, et absence de dépendance réseau — y compris transitive, vérifiée
-  mécaniquement.
+  lignes à 100 %**, absence de dépendance réseau — y compris transitive, vérifiée mécaniquement —
+  et le déchiffreur indépendant, qui échoue si la spécification du format ne suffit plus à lire un
+  vault.
 
 Les tests portent les garanties de sécurité plutôt que de les affirmer : une suite vérifie
 qu'aucun octet reconnaissable des données d'entrée n'apparaît sur le disque après une session

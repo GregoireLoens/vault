@@ -339,7 +339,7 @@ dizaines de milliers d'euros.
 
 ---
 
-## Les six portes
+## Les sept portes
 
 Passées en local avant chaque livraison, dans le conteneur :
 
@@ -350,6 +350,17 @@ Passées en local avant chaque livraison, dans le conteneur :
 ./scripts/dev.sh cargo test --workspace --all-targets
 ./scripts/dev.sh coverage
 ./scripts/dev.sh deny bans
+./scripts/dev.sh verifier-format
+```
+
+Elles étaient six jusqu'à la livraison de 002, qui a ajouté le déchiffreur indépendant et le
+harnais d'exploration — huit, donc, avant le retrait du second le 2026-08-09.
+
+À part, parce que sa portée est plus étroite : la **porte de livraison** ne bloque que les pull
+requests `release/vX.Y.Z`, et n'a besoin d'aucune chaîne d'outils.
+
+```bash
+./scripts/verifier-version.sh 1.1.0
 ```
 
 S'y ajoute, hors des portes mais avant chaque poussée, la compilation croisée qui écarte toute la
