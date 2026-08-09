@@ -244,7 +244,10 @@ Deux numéros de version cohabitent, et ils ne disent pas la même chose.
 un tag `vX.Y.Z` sur `main`.
 
 - **`0.x.y`** — développement. Le logiciel est incomplet et n'a pas été audité.
-- **Mineure** (`0.1.0` → `0.2.0`) — une user story livrée, ou un ajout de fonctionnalité.
+- **Mineure** (`0.1.0` → `0.2.0`) — une user story livrée, un ajout de fonctionnalité, ou un
+  ensemble de garanties nouvelles. Une mineure ne suppose pas toujours du code visible à
+  l'usage : `v1.1.0` n'ajoute aucune commande, seulement de quoi vérifier les promesses des
+  versions précédentes.
 - **Correctif** (`0.1.0` → `0.1.1`) — corrections, sans nouvelle fonctionnalité.
 - **`1.0.0`** — le périmètre de la première feature est complet et le format est tenu pour stable.
 
@@ -263,6 +266,7 @@ Autrement dit : passer de `v0.3.0` à `v0.4.0` ne rend jamais vos vaults illisib
 | `v0.3.0` | Retirer des fichiers — `vault rm` |
 | `v0.4.0` | Changer la passphrase — `vault passwd` |
 | `v1.0.0` | Périmètre complet, format 1 tenu pour stable |
+| `v1.1.0` | Vérifiabilité externe — aucune fonctionnalité nouvelle, des garanties contrôlables par un tiers. **Première livraison signée** |
 
 ---
 
