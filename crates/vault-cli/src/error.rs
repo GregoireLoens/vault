@@ -49,6 +49,12 @@ impl CliError {
                 // retour d'`add` (D-210).
                 Error::DestinationOccupied => 8,
                 Error::TransportFailed => 9,
+                // FR-029a, FR-029b : le compte rendu de la destination se
+                // réduit à son code de retour, et c'est donc **celui-là** qui
+                // remonte. Le traduire reviendrait à réinterpréter un verdict
+                // qu'on n'a pas rendu ; la cause, elle, a déjà atteint le
+                // terminal par l'erreur standard héritée du sous-processus.
+                Error::RemoteFailed { code } => *code,
                 Error::WeakPassphrase { .. } | Error::InvalidPath | Error::InvalidKdfParams => 2,
                 // Corruption, entrée non gérée, dossier peuplé, nom
                 // irreprésentable, entrée-sortie : erreur générique.
@@ -120,7 +126,7 @@ mod tests {
 
     #[test]
     fn chaque_erreur_a_le_code_du_contrat() {
-        let cas: [(CliError, i32); 15] = [
+        let cas: [(CliError, i32); 16] = [
             (CliError::Core(Error::Authentication), 3),
             (CliError::Core(Error::AlreadyInUse), 4),
             (CliError::Core(Error::NotFound), 5),
@@ -143,6 +149,7 @@ mod tests {
             (CliError::Core(Error::InvalidKdfParams), 2),
             (CliError::Core(Error::DestinationOccupied), 8),
             (CliError::Core(Error::TransportFailed), 9),
+            (CliError::Core(Error::RemoteFailed { code: 7 }), 7),
             (CliError::Core(Error::UnrepresentableName), 1),
             (CliError::Core(Error::Corrupted), 1),
             (CliError::Usage("mauvais argument".to_owned()), 2),
@@ -151,7 +158,7 @@ mod tests {
         ];
 
         let codes: Vec<i32> = cas.iter().map(|(erreur, _)| erreur.code()).collect();
-        assert_eq!(codes, vec![3, 4, 5, 6, 7, 2, 2, 2, 8, 9, 1, 1, 2, 2, 2]);
+        assert_eq!(codes, vec![3, 4, 5, 6, 7, 2, 2, 2, 8, 9, 7, 1, 1, 2, 2, 2]);
         for (erreur, _) in &cas {
             assert!(!erreur.message().is_empty());
             assert!(!format!("{erreur:?}").is_empty());

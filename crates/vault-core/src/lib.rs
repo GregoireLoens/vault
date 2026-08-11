@@ -28,6 +28,7 @@ mod error;
 mod format;
 mod fs;
 mod ops;
+mod transport;
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -39,6 +40,7 @@ pub use crate::error::{Error, Result};
 pub use crate::format::blob::{BLOB_ID_LEN, BlobId, MAX_FILE_SIZE};
 pub use crate::format::container::{
     CONTAINER_END, CONTAINER_MAGIC, CONTAINER_VERSION, ContainerHeader, MemberKind,
+    is_container_version_readable,
 };
 pub use crate::format::index::EntryKind;
 pub use crate::format::path::{NamingRules, VaultPath};
@@ -46,6 +48,7 @@ pub use crate::format::version::FORMAT_VERSION;
 pub use crate::fs::shred::{ShredCapability, shred_capability};
 pub use crate::ops::export::{ExportEnvelope, ExportSummary};
 pub use crate::ops::import::{ImportPolicy, ImportSummary};
+pub use crate::transport::{RemoteTarget, SshOptions};
 
 use crate::crypto::keys::MasterKey;
 use crate::format::header::Header;

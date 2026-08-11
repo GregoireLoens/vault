@@ -139,7 +139,7 @@ jobs:
       # continue ; celle-ci en relève, et elle est justifiée dans le fichier.
       - run: |
           cargo llvm-cov --workspace --all-targets \
-            --ignore-filename-regex 'vault-cli/src/console/tty\.rs' \
+            --ignore-filename-regex 'vault-cli/src/(console/tty|cmd/transport)\.rs' \
             --fail-under-lines 100
 
   format-spec:

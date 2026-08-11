@@ -29,7 +29,10 @@ use crate::error::{CliError, CliResult};
 use crate::prompt;
 
 /// FR-006, XFR-002 : ce que l'utilisateur doit savoir de tout conteneur.
-const AVERTISSEMENT: &str = "\n  ⚠  Ce conteneur porte la clé maîtresse de votre vault : qui l'ouvre peut\n     aussi ouvrir le vault d'origine. C'est une sauvegarde ou un déplacement,\n     pas un moyen de partager avec quelqu'un.\n";
+///
+/// Partagé avec `send` : un envoi est un export, et l'avertissement doit y être
+/// **le même**, mot pour mot.
+pub const AVERTISSEMENT: &str = "\n  ⚠  Ce conteneur porte la clé maîtresse de votre vault : qui l'ouvre peut\n     aussi ouvrir le vault d'origine. C'est une sauvegarde ou un déplacement,\n     pas un moyen de partager avec quelqu'un.\n";
 
 /// Désigne la sortie standard plutôt qu'un fichier.
 const SORTIE_STANDARD: &str = "-";
@@ -40,6 +43,8 @@ pub struct Options {
     pub destination: PathBuf,
     /// `--new-passphrase` : protéger le conteneur par une passphrase distincte.
     pub new_passphrase: bool,
+    /// `--probe` : sonder le vault source sans rien produire (D-205).
+    pub probe: bool,
 }
 
 /// Produit un conteneur depuis le vault désigné par `--vault`.
@@ -65,6 +70,17 @@ pub fn executer(
     standard: &mut dyn Write,
     standard_est_terminal: bool,
 ) -> CliResult<()> {
+    if options.probe {
+        // Mode de sondage : il n'écrit **rien**, pas même l'avertissement — un
+        // sondage n'exporte pas, et sa sortie d'erreur atteint le terminal de
+        // l'émetteur, où elle n'aurait rien à faire.
+        //
+        // `Vault::open` lit l'en-tête et refuse une version inconnue : c'est
+        // exactement le verdict attendu, et il n'écrit pas un octet.
+        drop(Vault::open(&contexte.vault_dir)?);
+        return Ok(());
+    }
+
     // XFR-002 : à chaque export, sans que l'utilisateur ait à le demander, et
     // avant tout le reste.
     contexte.console.warn(AVERTISSEMENT);
@@ -159,6 +175,15 @@ mod tests {
         coffre
     }
 
+    /// Options d'un export ordinaire vers `destination`.
+    fn options(destination: &Path) -> Options {
+        Options {
+            destination: destination.to_path_buf(),
+            new_passphrase: false,
+            probe: false,
+        }
+    }
+
     fn contexte<'a>(console: &'a mut FakeConsole, coffre: &Path) -> Contexte<'a> {
         Contexte {
             console,
@@ -181,8 +206,8 @@ mod tests {
         executer(
             &mut contexte(&mut console, &coffre),
             &Options {
-                destination: cible.clone(),
                 new_passphrase: false,
+                ..options(&cible)
             },
             &mut Vec::new(),
             false,
@@ -211,8 +236,8 @@ mod tests {
         executer(
             &mut contexte(&mut console, &coffre),
             &Options {
-                destination: atelier.path().join("avec-passphrase.vaultx"),
                 new_passphrase: true,
+                ..options(&atelier.path().join("avec-passphrase.vaultx"))
             },
             &mut Vec::new(),
             false,
@@ -246,8 +271,8 @@ mod tests {
             executer(
                 &mut contexte(&mut console, &coffre),
                 &Options {
-                    destination: PathBuf::from(SORTIE_STANDARD),
                     new_passphrase: false,
+                    ..options(&PathBuf::from(SORTIE_STANDARD))
                 },
                 &mut sortie,
                 true,
@@ -269,8 +294,8 @@ mod tests {
         executer(
             &mut contexte(&mut console, &coffre),
             &Options {
-                destination: PathBuf::from(SORTIE_STANDARD),
                 new_passphrase: false,
+                ..options(&PathBuf::from(SORTIE_STANDARD))
             },
             &mut sortie,
             false,
@@ -310,8 +335,8 @@ mod tests {
             executer(
                 &mut ctx,
                 &Options {
-                    destination: PathBuf::from(SORTIE_STANDARD),
                     new_passphrase: false,
+                    ..options(&PathBuf::from(SORTIE_STANDARD))
                 },
                 &mut sortie,
                 false,
@@ -333,8 +358,8 @@ mod tests {
         executer(
             &mut ctx,
             &Options {
-                destination: atelier.path().join("s.vaultx"),
                 new_passphrase: false,
+                ..options(&atelier.path().join("s.vaultx"))
             },
             &mut Vec::new(),
             false,
@@ -358,8 +383,8 @@ mod tests {
             executer(
                 &mut contexte(&mut console, &coffre),
                 &Options {
-                    destination: atelier.path().join("s.vaultx"),
                     new_passphrase: true,
+                    ..options(&atelier.path().join("s.vaultx"))
                 },
                 &mut Vec::new(),
                 false,
@@ -380,14 +405,57 @@ mod tests {
             executer(
                 &mut contexte(&mut console, &coffre),
                 &Options {
-                    destination: atelier.path().join("absent").join("s.vaultx"),
                     new_passphrase: false,
+                    ..options(&atelier.path().join("absent").join("s.vaultx"))
                 },
                 &mut Vec::new(),
                 false,
             ),
             Err(CliError::Io(_))
         ));
+    }
+
+    /// D-205 : le mode de sondage **n'écrit rien** — pas même l'avertissement,
+    /// dont la place est le terminal de l'émetteur et non celui du sondage — et
+    /// rend le verdict que `fetch` attend de la source distante.
+    #[test]
+    fn le_sondage_ne_dit_rien_et_rend_son_verdict() {
+        let atelier = tempfile::tempdir().expect("répertoire temporaire");
+        let coffre = coffre_peuple(atelier.path());
+
+        let mut console = FakeConsole::non_interactive();
+        let mut sortie = Vec::new();
+        executer(
+            &mut contexte(&mut console, &coffre),
+            &Options {
+                probe: true,
+                ..options(Path::new("-"))
+            },
+            &mut sortie,
+            false,
+        )
+        .expect("le vault source est lisible");
+
+        assert!(sortie.is_empty(), "le sondage n'écrit pas un octet");
+        let affiche = console.tout_affiche();
+        assert!(
+            affiche.trim().is_empty(),
+            "le sondage ne dit rien, pas même l'avertissement : {affiche}"
+        );
+
+        // Aucun vault à cet emplacement : le verdict est « introuvable ».
+        let mut console = FakeConsole::non_interactive();
+        let erreur = executer(
+            &mut contexte(&mut console, &atelier.path().join("nulle-part")),
+            &Options {
+                probe: true,
+                ..options(Path::new("-"))
+            },
+            &mut Vec::new(),
+            false,
+        )
+        .expect_err("refus attendu");
+        assert_eq!(erreur.code(), 5);
     }
 
     /// XFR-004 : un vault déjà ouvert par une autre instance rend 4, et
@@ -407,8 +475,8 @@ mod tests {
         let erreur = executer(
             &mut contexte(&mut console, &coffre),
             &Options {
-                destination: atelier.path().join("s.vaultx"),
                 new_passphrase: false,
+                ..options(&atelier.path().join("s.vaultx"))
             },
             &mut Vec::new(),
             false,

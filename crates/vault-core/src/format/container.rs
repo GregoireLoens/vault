@@ -68,6 +68,16 @@ pub const CONTAINER_VERSION: u32 = 1;
 /// versions antérieures.
 const READABLE_CONTAINER_VERSIONS: &[u32] = &[1];
 
+/// Vrai si cette version du logiciel sait lire ce format de conteneur.
+///
+/// Publiée parce que le **sondage** en a besoin : avant qu'un seul octet ne
+/// parte, la destination doit pouvoir dire si la version que l'émetteur annonce
+/// lui est lisible (D-205, FR-028).
+#[must_use]
+pub fn is_container_version_readable(version: u32) -> bool {
+    READABLE_CONTAINER_VERSIONS.contains(&version)
+}
+
 /// Borne supérieure de la charge d'un membre `header`, en octets.
 ///
 /// Un en-tête réel fait environ deux cents octets.
@@ -360,7 +370,7 @@ impl<R: Read> ContainerReader<R> {
         if repr.magic.as_slice() != CONTAINER_MAGIC {
             return Err(Error::Corrupted);
         }
-        if !READABLE_CONTAINER_VERSIONS.contains(&repr.container_version) {
+        if !is_container_version_readable(repr.container_version) {
             return Err(Error::UnsupportedFormatVersion {
                 found: repr.container_version,
                 supported: CONTAINER_VERSION,

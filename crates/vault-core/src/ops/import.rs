@@ -118,16 +118,7 @@ impl Vault {
         let mut reader = ContainerReader::open(source)?;
         let payload_bytes = reader.header().payload_bytes;
 
-        let occupe_par_vault = destination.join(HEADER_FILE).is_file();
-        // FR-013c : une destination qui existe sans être un vault est refusée,
-        // avec ou sans demande de remplacement. Le remplacement ne vaut que
-        // pour un vault reconnu comme tel.
-        if destination.exists() && !occupe_par_vault {
-            return Err(Error::AlreadyExists);
-        }
-        if occupe_par_vault && policy == ImportPolicy::Refuse {
-            return Err(Error::DestinationOccupied);
-        }
+        let occupe_par_vault = verifier_destination(destination, policy)?;
 
         let parent = atomic::parent_of(destination);
         if !parent.is_dir() {
@@ -175,6 +166,49 @@ impl Vault {
             replaced,
         })
     }
+}
+
+impl Vault {
+    /// Dit si `destination` peut recevoir un vault, **sans rien écrire**.
+    ///
+    /// C'est le verdict que rend le mode de sondage, et c'est tout ce qu'il
+    /// rend : un oui ou un non, sans un octet sur la sortie standard (D-205,
+    /// FR-029a).
+    ///
+    /// # Errors
+    ///
+    /// Celles de [`verifier_destination`] : [`Error::AlreadyExists`] si la
+    /// destination existe sans être un vault, [`Error::DestinationOccupied`] si
+    /// un vault l'occupe et que le remplacement n'a pas été demandé.
+    pub fn check_destination(destination: &Path, policy: ImportPolicy) -> Result<()> {
+        verifier_destination(destination, policy).map(drop)
+    }
+}
+
+/// Décide si une destination peut recevoir un vault, et dit si elle en porte
+/// déjà un.
+///
+/// Vit à part parce qu'un **rapatriement** doit pouvoir prononcer ce refus
+/// **avant** d'ouvrir la moindre session ssh : la destination y est locale, et
+/// rien n'oblige à traverser le réseau pour découvrir qu'elle est occupée
+/// (FR-028).
+///
+/// # Errors
+///
+/// - [`Error::AlreadyExists`] si la destination existe **sans** être un vault.
+///   Le refus est sans appel : `policy` n'y change rien, car le remplacement ne
+///   vaut que pour un vault reconnu comme tel (FR-013c) ;
+/// - [`Error::DestinationOccupied`] si un vault l'occupe et que `policy` vaut
+///   [`ImportPolicy::Refuse`] (FR-013).
+pub(crate) fn verifier_destination(destination: &Path, policy: ImportPolicy) -> Result<bool> {
+    let occupe_par_vault = destination.join(HEADER_FILE).is_file();
+    if destination.exists() && !occupe_par_vault {
+        return Err(Error::AlreadyExists);
+    }
+    if occupe_par_vault && policy == ImportPolicy::Refuse {
+        return Err(Error::DestinationOccupied);
+    }
+    Ok(occupe_par_vault)
 }
 
 /// Écrit les membres du conteneur dans le répertoire d'attente, et rend le

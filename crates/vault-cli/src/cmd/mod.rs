@@ -9,11 +9,14 @@ pub mod add;
 pub mod create;
 pub mod export;
 pub mod extract;
+pub mod fetch;
 pub mod import;
 pub mod info;
 pub mod ls;
 pub mod passwd;
 pub mod rm;
+pub mod send;
+pub mod transport;
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};

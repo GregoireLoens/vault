@@ -120,16 +120,20 @@ enum Commande {
     /// Produit un conteneur portable depuis le vault.
     Export {
         /// Fichier de sortie. `-` désigne la sortie standard.
-        #[arg(long = "to", value_name = "CHEMIN")]
-        destination: PathBuf,
+        #[arg(long = "to", value_name = "CHEMIN", required_unless_present = "probe")]
+        destination: Option<PathBuf>,
         /// Protège le conteneur par une passphrase distincte.
         #[arg(long)]
         new_passphrase: bool,
+        /// Sonde le vault sans rien produire. Employée par `fetch` (D-205).
+        #[arg(long, hide = true)]
+        probe: bool,
     },
     /// Reconstitue un vault depuis un conteneur.
     Import {
         /// Conteneur à lire. `-` désigne l'entrée standard.
-        source: PathBuf,
+        #[arg(required_unless_present = "probe")]
+        source: Option<PathBuf>,
         /// Répertoire du vault à créer.
         #[arg(long = "to", value_name = "CHEMIN")]
         destination: PathBuf,
@@ -139,6 +143,55 @@ enum Commande {
         /// Contrôle en outre tous les tags AEAD. Demande la passphrase.
         #[arg(long)]
         verify_content: bool,
+        /// Sonde la destination sans rien recevoir. Employée par `send` (D-205).
+        #[arg(long, hide = true)]
+        probe: bool,
+        /// Version de conteneur que l'émetteur annonce, pour le sondage.
+        #[arg(long, value_name = "N", hide = true)]
+        container_version: Option<u32>,
+    },
+    /// Envoie un vault local vers un poste distant, par ssh.
+    Send {
+        /// Vault local à envoyer.
+        vault: PathBuf,
+        /// Cible distante, `[utilisateur@]hôte:chemin`.
+        cible: std::ffi::OsString,
+        /// Remplace un vault existant à la destination.
+        #[arg(long)]
+        replace: bool,
+        /// Option passée telle quelle au client ssh. Répétable.
+        ///
+        /// `allow_hyphen_values` est indispensable : ces valeurs commencent
+        /// presque toujours par un tiret — `-p2222`, `-oControlMaster=auto` —
+        /// et clap les prendrait sinon pour des drapeaux de vault (FR-027).
+        #[arg(long = "ssh-option", value_name = "OPT", allow_hyphen_values = true)]
+        ssh_options: Vec<std::ffi::OsString>,
+        /// Commande vault à invoquer à distance. `vault` par défaut.
+        #[arg(long, value_name = "CMD")]
+        remote_command: Option<String>,
+    },
+    /// Rapatrie un vault depuis un poste distant, par ssh.
+    Fetch {
+        /// Source distante, `[utilisateur@]hôte:chemin`.
+        source: std::ffi::OsString,
+        /// Répertoire du vault à créer localement.
+        destination: PathBuf,
+        /// Remplace un vault existant à la destination.
+        #[arg(long)]
+        replace: bool,
+        /// Option passée telle quelle au client ssh. Répétable.
+        ///
+        /// `allow_hyphen_values` est indispensable : ces valeurs commencent
+        /// presque toujours par un tiret — `-p2222`, `-oControlMaster=auto` —
+        /// et clap les prendrait sinon pour des drapeaux de vault (FR-027).
+        #[arg(long = "ssh-option", value_name = "OPT", allow_hyphen_values = true)]
+        ssh_options: Vec<std::ffi::OsString>,
+        /// Commande vault à invoquer à distance. `vault` par défaut.
+        #[arg(long, value_name = "CMD")]
+        remote_command: Option<String>,
+        /// Refusée : elle exigerait que la passphrase traverse le canal.
+        #[arg(long)]
+        new_passphrase: bool,
     },
 }
 
@@ -156,6 +209,13 @@ fn main() {
 }
 
 /// Exécute la commande demandée.
+///
+/// Cette fonction est **longue par nature** : c'est une table d'aiguillage, et
+/// elle gagne une entrée par commande. La découper ne la raccourcirait pas —
+/// elle déplacerait les entrées ailleurs, en ajoutant au passage un bras
+/// inatteignable dans chaque moitié, que la porte de couverture refuserait à
+/// juste titre. Chaque bras y tient en une expression, et se lit seul.
+#[allow(clippy::too_many_lines)]
 fn executer(cli: &Cli, console: &mut dyn Console) -> CliResult<()> {
     let mut contexte = Contexte {
         console,
@@ -230,19 +290,65 @@ fn executer(cli: &Cli, console: &mut dyn Console) -> CliResult<()> {
         Commande::Export {
             destination,
             new_passphrase,
-        } => exporter(&mut contexte, destination.clone(), *new_passphrase),
+            probe,
+        } => exporter(
+            &mut contexte,
+            &cmd::export::Options {
+                destination: destination.clone().unwrap_or_default(),
+                new_passphrase: *new_passphrase,
+                probe: *probe,
+            },
+        ),
         Commande::Import {
             source,
             destination,
             replace,
             verify_content,
+            probe,
+            container_version,
         } => importer(
             &mut contexte,
             &cmd::import::Options {
-                source: source.clone(),
+                source: source.clone().unwrap_or_default(),
                 destination: destination.clone(),
                 replace: *replace,
                 verify_content: *verify_content,
+                probe: *probe,
+                container_version: *container_version,
+            },
+        ),
+        Commande::Send {
+            vault,
+            cible,
+            replace,
+            ssh_options,
+            remote_command,
+        } => cmd::send::executer(
+            &mut contexte,
+            &cmd::send::Options {
+                vault: vault.clone(),
+                cible: cible.clone(),
+                replace: *replace,
+                ssh_options: ssh_options.clone(),
+                remote_command: remote_command.clone(),
+            },
+        ),
+        Commande::Fetch {
+            source,
+            destination,
+            replace,
+            ssh_options,
+            remote_command,
+            new_passphrase,
+        } => cmd::fetch::executer(
+            &mut contexte,
+            &cmd::fetch::Options {
+                source: source.clone(),
+                destination: destination.clone(),
+                replace: *replace,
+                ssh_options: ssh_options.clone(),
+                remote_command: remote_command.clone(),
+                new_passphrase: *new_passphrase,
             },
         ),
     }
@@ -253,14 +359,11 @@ fn executer(cli: &Cli, console: &mut dyn Console) -> CliResult<()> {
 /// Le conteneur y sort **seul** (XFR-006). La détection de terminal vit dans
 /// `console::tty`, seul fichier exclu de la couverture ; la **décision** qui en
 /// découle est dans la commande, donc mesurée (XFR-005).
-fn exporter(contexte: &mut Contexte, destination: PathBuf, new_passphrase: bool) -> CliResult<()> {
+fn exporter(contexte: &mut Contexte, options: &cmd::export::Options) -> CliResult<()> {
     let mut sortie = std::io::stdout().lock();
     cmd::export::executer(
         contexte,
-        &cmd::export::Options {
-            destination,
-            new_passphrase,
-        },
+        options,
         &mut sortie,
         crate::console::tty::stdout_is_terminal(),
     )
@@ -520,6 +623,105 @@ mod tests {
                 .contains("0 dossier(s), 0 fichier(s)")
         );
         assert!(sortie.join("note.txt").is_file());
+    }
+
+    /// Les deux commandes de transfert, prises par le même chemin que le
+    /// binaire — **sans qu'aucune session ssh ne soit ouverte**.
+    ///
+    /// C'est délibéré, et c'est ce qui rend ce test sûr partout : chaque cas
+    /// échoue **avant** le lancement du sous-processus. Un test qui laisserait
+    /// `send` atteindre le client tenterait de joindre un hôte nommé
+    /// `poste-b` sur la machine de qui l'exécute. Les transferts qui vont
+    /// jusqu'au bout vivent dans `tests/transfer.rs`, contre le faux client.
+    #[test]
+    fn les_transferts_s_arretent_avant_toute_session() {
+        let atelier = tempfile::tempdir().expect("répertoire temporaire");
+        let coffre = atelier.path().join("coffre");
+        vault_core::Vault::create(
+            &coffre,
+            vault_core::SecretString::from(PASSPHRASE.to_owned()),
+            vault_core::KdfParams::new(64, 1, 1).expect("valides"),
+        )
+        .expect("créable")
+        .lock();
+
+        // XFR-029 : sans terminal et sans `--yes`, le remplacement ne peut pas
+        // être confirmé — et rien ne part.
+        let envoi = analyser(&[
+            "send",
+            coffre.to_str().expect("UTF-8"),
+            "poste-b:/coffres/v",
+            "--replace",
+            "--ssh-option",
+            "-p2222",
+            "--remote-command",
+            "/opt/vault",
+        ]);
+        let mut console = FakeConsole::non_interactive();
+        assert_eq!(
+            executer(&envoi, &mut console)
+                .expect_err("refus attendu")
+                .code(),
+            2
+        );
+
+        // La destination d'un rapatriement est locale : occupée, elle fait
+        // échouer avant qu'aucune session ne soit ouverte.
+        let rapatriement = analyser(&[
+            "fetch",
+            "poste-b:/coffres/v",
+            coffre.to_str().expect("UTF-8"),
+            "--ssh-option",
+            "-p2222",
+            "--remote-command",
+            "/opt/vault",
+        ]);
+        let mut console = FakeConsole::non_interactive();
+        assert_eq!(
+            executer(&rapatriement, &mut console)
+                .expect_err("refus attendu")
+                .code(),
+            8
+        );
+    }
+
+    /// Le sondage passe par le même aiguillage que les commandes ordinaires.
+    #[test]
+    fn le_sondage_passe_par_l_aiguillage() {
+        let atelier = tempfile::tempdir().expect("répertoire temporaire");
+        let coffre = atelier.path().join("coffre");
+        vault_core::Vault::create(
+            &coffre,
+            vault_core::SecretString::from(PASSPHRASE.to_owned()),
+            vault_core::KdfParams::new(64, 1, 1).expect("valides"),
+        )
+        .expect("créable")
+        .lock();
+
+        let sondage_export = analyser(&[
+            "export",
+            "--probe",
+            "--vault",
+            coffre.to_str().expect("UTF-8"),
+        ]);
+        let mut console = FakeConsole::non_interactive();
+        executer(&sondage_export, &mut console).expect("le vault est lisible");
+
+        let sondage_import = analyser(&[
+            "import",
+            "--probe",
+            "--to",
+            coffre.to_str().expect("UTF-8"),
+            "--container-version",
+            "1",
+        ]);
+        let mut console = FakeConsole::non_interactive();
+        assert_eq!(
+            executer(&sondage_import, &mut console)
+                .expect_err("destination occupée")
+                .code(),
+            8
+        );
     }
 
     /// Les deux commandes de la feature 003, prises par le même chemin que le

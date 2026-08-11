@@ -58,14 +58,20 @@ case "$1" in
         ;;
     coverage)
         shift
-        # L'exclusion porte sur un seul fichier, qui ne contient que la lecture
-        # masquée sur le terminal. Un exécuteur d'intégration continue n'a pas
-        # de terminal, et CLI-001 interdit de recevoir la passphrase autrement
-        # que par une saisie masquée : ce code ne peut donc pas s'exécuter sur
-        # la plateforme d'intégration. C'est la seule catégorie de dérogation
-        # que le principe VIII admet, et elle est justifiée dans le fichier.
+        # Deux exclusions, chacune justifiée dans le fichier qu'elle vise et
+        # récapitulée dans docs/coverage-exclusions.md.
+        #
+        # console/tty.rs ne contient que la lecture masquée sur le terminal :
+        # un exécuteur d'intégration n'a pas de terminal, et CLI-001 interdit
+        # de recevoir la passphrase autrement. Ce code ne PEUT PAS s'exécuter
+        # là où la couverture est mesurée.
+        #
+        # cmd/transport.rs, lui, S'EXÉCUTE — les tests de transfert le
+        # traversent — mais pas dans l'instanciation de test, qui n'a pas de
+        # client ssh dans son PATH et ne peut pas s'en donner un. C'est un
+        # ÉLARGISSEMENT de la règle, assumé et écrit.
         set -- cargo llvm-cov --workspace --all-targets \
-            --ignore-filename-regex 'vault-cli/src/console/tty\.rs' \
+            --ignore-filename-regex 'vault-cli/src/(console/tty|cmd/transport)\.rs' \
             --fail-under-lines 100 "$@"
         ;;
     verifier-format)

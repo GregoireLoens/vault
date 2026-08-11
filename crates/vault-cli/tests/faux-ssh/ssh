@@ -1,0 +1,93 @@
+#!/bin/sh
+#
+# Faux client ssh — D-207, T044.
+#
+# Le code de production lance `ssh` **résolu par le `PATH`**, et ne comporte
+# aucune couture : ni trait substituable, ni paramètre de programme, ni variable
+# d'environnement lue par vault. Les tests placent donc ce script en tête du
+# `PATH` du processus qu'ils lancent, et ce sont les **vraies lignes** de vault
+# qui s'exécutent — construction des arguments, tubes, attente, lecture du code
+# de retour.
+#
+# Ce script joue les scénarios que le vrai client ne saurait pas produire à la
+# demande : hôte inconnu, empreinte changée, commande distante absente, canal
+# rompu à mi-course, code de retour non nul, mort par signal.
+#
+# Il est piloté par des variables d'environnement que **le test** pose, et que
+# vault ne connaît pas :
+#
+#   FAUX_SSH_JOURNAL          fichier où consigner la ligne de commande reçue
+#   FAUX_SSH_RECU             fichier où consigner tout ce qui traverse le tube
+#   FAUX_SSH_MODE             comportement de la session de transmission
+#   FAUX_SSH_MODE_SONDAGE     comportement de la session de sondage
+#
+# Les deux derniers prennent l'une de ces valeurs :
+#
+#   relais         exécute la commande distante ici même (défaut)
+#   absent         « ssh: command not found », code 127
+#   hote-inconnu   « Host key verification failed. », code 255
+#   empreinte      l'avertissement de changement de clé d'hôte, code 255
+#   rompu          lit quelques octets puis coupe le canal
+#   signal         se tue par un signal, sans rendre de code
+#   code:<n>       consomme tout, puis rend <n>
+#
+set -u
+
+journal="${FAUX_SSH_JOURNAL:-/dev/null}"
+recu="${FAUX_SSH_RECU:-/dev/null}"
+
+# La commande distante est le dernier argument : ssh concatène tout le reste.
+for derniere in "$@"; do :; done
+
+printf '%s\n' "$*" >> "$journal"
+
+# Le sondage et la transmission se pilotent séparément : c'est ce qui permet
+# d'éprouver un sondage qui passe suivi d'une transmission qui échoue, et
+# l'inverse.
+case "$derniere" in
+    *--probe*) mode="${FAUX_SSH_MODE_SONDAGE:-relais}" ;;
+    *)         mode="${FAUX_SSH_MODE:-relais}" ;;
+esac
+
+case "$mode" in
+    absent)
+        printf 'ssh: command not found\n' >&2
+        exit 127
+        ;;
+    hote-inconnu)
+        printf 'Host key verification failed.\n' >&2
+        exit 255
+        ;;
+    empreinte)
+        printf '@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\n' >&2
+        exit 255
+        ;;
+    rompu)
+        # Quelques octets sont lus, puis le canal se ferme : l'émetteur reçoit
+        # EPIPE au milieu de sa transmission.
+        dd bs=1 count=64 >/dev/null 2>&1
+        exit 1
+        ;;
+    signal)
+        # Consommer d'abord, pour que la mort ne se confonde pas avec un canal
+        # rompu, puis se tuer : le processus ne rend alors aucun code.
+        cat >/dev/null 2>&1
+        kill -TERM $$
+        # Inatteignable, sauf si le signal est ignoré.
+        exit 1
+        ;;
+    code:*)
+        # Consommer tout avant de refuser : sans cela, l'émetteur verrait un
+        # canal rompu plutôt qu'un refus motivé.
+        cat >/dev/null 2>&1
+        exit "${mode#code:}"
+        ;;
+esac
+
+# Mode « relais » : la commande distante s'exécute ici, et tout ce qui traverse
+# le tube est consigné au passage.
+#
+# `eval` est délibéré : c'est **exactement** ce que fait le shell distant d'un
+# vrai ssh, et c'est donc la seule façon d'éprouver pour de bon la citation
+# POSIX de D-206. Une citation fautive casse ici, comme elle casserait là-bas.
+tee -a "$recu" | eval "$derniere"

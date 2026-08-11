@@ -344,3 +344,176 @@ fn aucune_option_n_accepte_la_passphrase() {
 
     assert_eq!(fautives, Vec::<String>::new());
 }
+
+// ---------------------------------------------------------------------------
+// La surface des quatre commandes de la feature 003 — T059
+// ---------------------------------------------------------------------------
+//
+// Ces tests exercent le **binaire**, donc sans terminal : ils portent sur ce
+// qui se refuse avant toute saisie — la grammaire, les arguments obligatoires,
+// et les refus de forme. Les dialogues eux-mêmes vivent dans les tests
+// unitaires du crate, et les transferts dans `tests/transfer.rs`.
+
+/// Les quatre commandes existent, et leur aide décrit ce qu'elles font.
+#[test]
+fn les_quatre_commandes_figurent_dans_l_aide() {
+    let aide = String::from_utf8(
+        vault()
+            .arg("--help")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    )
+    .expect("UTF-8");
+
+    for commande in ["export", "import", "send", "fetch"] {
+        assert!(aide.contains(commande), "{commande} absente : {aide}");
+    }
+}
+
+/// Les arguments obligatoires sont exigés : une commande incomplète rend 2 sans
+/// rien tenter.
+#[test]
+fn les_arguments_obligatoires_des_transferts_sont_exiges() {
+    for arguments in [
+        vec!["export"],
+        vec!["import"],
+        vec!["import", "conteneur.vaultx"],
+        vec!["send"],
+        vec!["send", "/coffre"],
+        vec!["fetch"],
+        vec!["fetch", "hote:/coffre"],
+    ] {
+        vault().args(&arguments).assert().code(2);
+    }
+}
+
+/// FR-019a, XFR-030 : la combinaison distant-distant est inexprimable, et un
+/// argument local qui ressemble à une cible distante est refusé en disant
+/// **quelle** commande employer.
+#[test]
+fn les_transferts_refusent_de_confondre_leurs_extremites() {
+    let _serie = en_serie();
+
+    vault()
+        .args(["send", "poste-a:/coffre", "poste-b:/coffre"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("fetch"));
+
+    vault()
+        .args(["fetch", "poste-a:/coffre", "poste-b:/coffre"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("send"));
+}
+
+/// XFR-031 : `--new-passphrase` existe sur `fetch` **pour être refusée**, et le
+/// refus nomme la raison — FR-023 — plutôt que de laisser croire à un oubli.
+#[test]
+fn le_rapatriement_refuse_la_passphrase_distincte_en_nommant_la_raison() {
+    let _serie = en_serie();
+
+    vault()
+        .args([
+            "fetch",
+            "poste-b:/coffre",
+            "/tmp/nulle-part-vault",
+            "--new-passphrase",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("traverse le canal"));
+}
+
+/// XFR-005 : un conteneur ne s'écrit pas sur un terminal — et hors terminal, la
+/// commande va jusqu'au bout. Le processus de test n'ayant pas de terminal,
+/// c'est la seconde moitié de la règle qui est vérifiable ici.
+#[test]
+fn l_export_vers_la_sortie_standard_aboutit_hors_terminal() {
+    let _serie = en_serie();
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let coffre = coffre_neuf(atelier.path());
+
+    let sortie = vault()
+        .args(["export", "--to", "-", "--vault", en_texte(&coffre)])
+        .assert()
+        .code(0)
+        .get_output()
+        .stdout
+        .clone();
+
+    // XFR-006 : le conteneur sort **seul**, et l'avertissement est passé par
+    // l'erreur standard.
+    assert!(
+        sortie
+            .windows(vault_core::CONTAINER_MAGIC.len())
+            .any(|fenetre| fenetre == vault_core::CONTAINER_MAGIC),
+        "la sortie standard doit porter le conteneur"
+    );
+    assert!(!String::from_utf8_lossy(&sortie).contains("clé maîtresse"));
+}
+
+/// Le mode de sondage n'écrit **rien** sur la sortie standard, et rend le code
+/// que D-205 lui assigne.
+#[test]
+fn le_sondage_ne_dit_rien_d_autre_que_son_code() {
+    let _serie = en_serie();
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let coffre = coffre_neuf(atelier.path());
+
+    // Destination libre : 0, et pas un octet.
+    vault()
+        .args([
+            "import",
+            "--probe",
+            "--to",
+            en_texte(&atelier.path().join("libre")),
+            "--container-version",
+            "1",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicates::str::is_empty());
+
+    // Destination occupée par un vault : 8.
+    vault()
+        .args(["import", "--probe", "--to", en_texte(&coffre)])
+        .assert()
+        .code(8)
+        .stdout(predicates::str::is_empty());
+
+    // Version de conteneur non gérée : 7, et la version rencontrée est nommée.
+    vault()
+        .args([
+            "import",
+            "--probe",
+            "--to",
+            en_texte(&atelier.path().join("libre")),
+            "--container-version",
+            "99",
+        ])
+        .assert()
+        .code(7)
+        .stdout(predicates::str::is_empty())
+        .stderr(predicates::str::contains("99"));
+
+    // Le sondage d'export : 0 sur un vault lisible, 5 s'il n'y en a pas.
+    vault()
+        .args(["export", "--probe", "--vault", en_texte(&coffre)])
+        .assert()
+        .code(0)
+        .stdout(predicates::str::is_empty());
+    vault()
+        .args([
+            "export",
+            "--probe",
+            "--vault",
+            en_texte(&atelier.path().join("nulle-part")),
+        ])
+        .assert()
+        .code(5)
+        .stdout(predicates::str::is_empty());
+}

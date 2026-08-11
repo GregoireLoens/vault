@@ -43,6 +43,10 @@ pub struct Options {
     pub replace: bool,
     /// `--verify-content` : contrôler en outre tous les tags AEAD.
     pub verify_content: bool,
+    /// `--probe` : sonder la destination sans rien recevoir (D-205).
+    pub probe: bool,
+    /// `--container-version` : version de conteneur que l'émetteur annonce.
+    pub container_version: Option<u32>,
 }
 
 /// Reconstitue un vault depuis un conteneur.
@@ -73,6 +77,10 @@ pub fn executer(
     } else {
         ImportPolicy::Refuse
     };
+
+    if options.probe {
+        return sonder(options, policy);
+    }
 
     let resume = if options.source == Path::new(ENTREE_STANDARD) {
         Vault::import(standard, &options.destination, policy)
@@ -139,6 +147,34 @@ pub fn executer(
         }
     }
     Ok(())
+}
+
+/// Mode de sondage — D-205, XFR-023.
+///
+/// **Il n'écrit rien sur la sortie standard, et rend un code de retour, un
+/// seul.** C'est la seule chose qu'un émetteur apprend de la destination avant
+/// de transmettre, et c'est délibéré : FR-029a interdit tout protocole entre
+/// vault et vault, et un rang de membre ne tiendrait de toute façon pas dans
+/// huit bits.
+///
+/// | Code | Ce qu'il dit |
+/// |---|---|
+/// | 0 | La destination est libre, la version annoncée est lisible |
+/// | 7 | La version de conteneur annoncée n'est pas gérée |
+/// | 8 | La destination est occupée par un vault |
+/// | 2 | Le chemin existe sans être un vault, ou l'usage est invalide |
+fn sonder(options: &Options, policy: ImportPolicy) -> CliResult<()> {
+    // La version est contrôlée **avant** la destination : un émetteur trop
+    // récent doit l'apprendre même si la destination est par ailleurs libre.
+    if let Some(annoncee) = options.container_version
+        && !vault_core::is_container_version_readable(annoncee)
+    {
+        return Err(CliError::Core(Error::UnsupportedFormatVersion {
+            found: annoncee,
+            supported: vault_core::CONTAINER_VERSION,
+        }));
+    }
+    Vault::check_destination(&options.destination, policy).map_err(destination_inutilisable)
 }
 
 /// XFR-014 : une destination qui existe **sans** être un vault est un problème
@@ -209,6 +245,8 @@ mod tests {
             destination: destination.to_path_buf(),
             replace: false,
             verify_content: false,
+            probe: false,
+            container_version: None,
         }
     }
 
@@ -494,6 +532,47 @@ mod tests {
         )
         .expect("importable et vérifiable");
         assert!(console.tout_affiche().contains("\"verified\":1"));
+    }
+
+    /// D-205, XFR-023 : le sondage n'écrit rien, et rend un code, un seul.
+    #[test]
+    fn le_sondage_rend_un_code_et_rien_d_autre() {
+        let atelier = tempfile::tempdir().expect("répertoire temporaire");
+        let (coffre, _) = coffre_et_conteneur(atelier.path());
+
+        let sonder_vers = |destination: &Path, version, replace| {
+            let mut console = FakeConsole::non_interactive();
+            let resultat = executer(
+                &mut contexte(&mut console, atelier.path()),
+                &Options {
+                    probe: true,
+                    container_version: version,
+                    replace,
+                    ..options(Path::new(ENTREE_STANDARD), destination)
+                },
+                &mut std::io::empty(),
+            );
+            let affiche = console.tout_affiche();
+            assert!(
+                affiche.trim().is_empty(),
+                "le sondage n'écrit rien : {affiche}"
+            );
+            resultat.map_err(|erreur| erreur.code())
+        };
+
+        // Destination libre, version lisible : 0.
+        assert!(sonder_vers(&atelier.path().join("libre"), Some(1), false).is_ok());
+        // Destination occupée par un vault : 8, et 0 si le remplacement est
+        // demandé.
+        assert_eq!(sonder_vers(&coffre, None, false), Err(8));
+        assert!(sonder_vers(&coffre, None, true).is_ok());
+        // Version de conteneur non gérée : 7, **avant** même de regarder la
+        // destination.
+        assert_eq!(sonder_vers(&coffre, Some(99), true), Err(7));
+        // Chemin qui existe sans être un vault : 2.
+        let fichier = atelier.path().join("fichier-ordinaire");
+        std::fs::write(&fichier, b"contenu etranger").expect("écrivable");
+        assert_eq!(sonder_vers(&fichier, None, true), Err(2));
     }
 
     /// La traduction de XFR-014 ne détourne que `AlreadyExists` : tout le reste

@@ -35,7 +35,10 @@ Ce qui fonctionne aujourd'hui :
 | ✅ `vault rm` | Retirer une entrée, définitivement |
 | ✅ `vault passwd` | Changer la passphrase, sans réécrire le contenu |
 | ✅ `vault info` | Paramètres publics du vault, sans le déverrouiller |
-| ⏳ Export et transfert entre postes | Prévus, pas encore commencés |
+| ✅ `vault export` | Sortir le vault en un fichier unique, portable |
+| ✅ `vault import` | Le remettre, octet pour octet |
+| ✅ `vault send` | L'envoyer vers un autre poste, par ssh |
+| ✅ `vault fetch` | Le rapatrier depuis un autre poste |
 
 ---
 
@@ -53,7 +56,8 @@ Un logiciel de chiffrement qui ne dit pas où s'arrêtent ses garanties est un l
 
 ### Fuites résiduelles, assumées et documentées
 
-Un observateur qui accède au répertoire d'un vault **verrouillé**, sans la passphrase, apprend :
+Un observateur qui accède au répertoire d'un vault **verrouillé** — ou à un **conteneur
+d'export**, qui n'en révèle ni plus ni moins —, sans la passphrase, apprend :
 
 | Ce qu'il apprend | Précision | Atténuation |
 |---|---|---|
@@ -66,6 +70,30 @@ Il n'apprend **ni** les noms de fichiers, **ni** l'arborescence, **ni** les tail
 **ni** le contenu, **ni** si deux fichiers du vault sont identiques, **ni** dans quel ordre ils
 ont été déposés — les dates des blobs sont toutes ramenées à la même valeur, faute de quoi trier
 le répertoire par date reconstituerait la chronologie du vault.
+
+### Un export n'est pas un partage
+
+**Un conteneur d'export porte la clé maîtresse du vault dont il provient.** Qui l'ouvre peut donc
+ouvrir le vault d'origine. C'est une sauvegarde ou un déplacement — jamais un moyen de confier un
+contenu à quelqu'un sans lui confier tout le coffre.
+
+Choisir une passphrase distincte pour le conteneur n'y change **rien** : la clé maîtresse
+transportée est la même. C'est pourquoi vault le rappelle à chaque export, et pourquoi `--quiet`
+ne supprime pas cet avertissement.
+
+Un vrai partage demanderait une clé neuve et un rechiffrement intégral du contenu — un coût
+proportionnel au volume, et une fonctionnalité en soi. Elle n'existe pas.
+
+### Ce qu'un transfert protège, et ce qu'il ne protège pas
+
+| | |
+|---|---|
+| ✅ Le contenu est chiffré **avant** d'entrer dans le canal | ssh est une couche supplémentaire, jamais la seule |
+| ✅ Aucun secret ne traverse le canal | Ni passphrase, ni clé maîtresse : un export par défaut n'ouvre pas le vault |
+| ✅ L'authentification des deux bouts est celle d'OpenSSH | Vos clés, votre fichier des hôtes connus, vos habitudes |
+| ✅ Une interruption ne laisse jamais de vault à moitié écrit | Réception à côté, vérification, puis bascule |
+| ❌ vault ne peut pas corriger une configuration ssh affaiblie | Un `StrictHostKeyChecking no` dans votre `~/.ssh/config` désarme la vérification d'hôte sans que vault le sache |
+| ❌ Un sceau vert ne signifie pas « authentique » | Il signifie **complet et non corrompu**. L'authenticité vient du déchiffrement, avec la passphrase |
 
 ### Hors périmètre
 
@@ -100,6 +128,11 @@ changement de passphrase instantané, quelle que soit la taille du vault.
 déchiffrement pas à pas. C'est une exigence du projet : un vault doit rester déchiffrable dans dix
 ans, à partir de cette seule spécification et d'outils cryptographiques standard, sans exécuter
 vault.
+
+**[`docs/conteneur.md`](docs/conteneur.md) fait de même pour le conteneur d'export**, et il est
+court : un conteneur **cadre** un vault, il ne le chiffre pas. Aucune primitive, aucune chaîne de
+dérivation, aucune donnée associée n'y est ajoutée — dépaqueter un conteneur produit un répertoire
+de vault, et rien d'autre.
 
 ---
 
@@ -225,6 +258,107 @@ processus.
 `--json` produit une sortie lisible par une machine ; `--quiet` supprime la progression sans
 jamais faire taire les avertissements.
 
+**Tout le dialogue passe par l'erreur standard** — progression, invites, avertissements, erreurs.
+La sortie standard ne porte que ce qu'une machine lit : le rendu `--json`, un listage, et le
+conteneur d'export. Sans cette séparation, un tube produirait un conteneur corrompu par la
+première ligne de progression.
+
+### Sauvegarder : `export` et `import`
+
+Un **conteneur d'export** est un fichier unique qui porte le vault entier. On le copie comme
+n'importe quel fichier — sur un disque externe, sur une sauvegarde hors-ligne, sur une clé USB.
+
+```console
+$ vault export --to sauvegarde.vaultx --vault ~/mon-vault
+
+  ⚠  Ce conteneur porte la clé maîtresse de votre vault : qui l'ouvre peut
+     aussi ouvrir le vault d'origine. C'est une sauvegarde ou un déplacement,
+     pas un moyen de partager avec quelqu'un.
+
+1 vault exporté, 2.4 Mo, 143 blob(s).
+```
+
+**Aucune passphrase ne vous est demandée**, et ce n'est pas un raccourci : l'enveloppe du vault
+source est recopiée telle quelle, sans jamais être ouverte. La clé maîtresse n'existe donc à aucun
+moment en mémoire, et le conteneur s'ouvre avec la passphrase du vault d'origine.
+
+Deux conséquences utiles :
+
+- **Un export est déterministe.** Deux exports d'un vault inchangé donnent des octets identiques :
+  vous pouvez comparer une sauvegarde à une autre sans en ouvrir aucune.
+- **Un export coûte le prix d'une recopie.** Rien n'est déchiffré ni rechiffré. Un vault de quatre
+  cents gigaoctets produit un conteneur de quatre cents gigaoctets, au débit du support.
+
+```console
+$ vault import sauvegarde.vaultx --to ~/vault-restaure
+Vault reconstitué : /home/vous/vault-restaure — 143 blob(s), sceau vérifié.
+```
+
+L'import ne demande rien non plus : il transpose le conteneur sans l'ouvrir. Ce qu'il vérifie —
+que **tout** est arrivé et que rien n'a été corrompu — se contrôle sans la passphrase.
+`--verify-content` va plus loin et contrôle l'authenticité de chaque fichier ; il demande alors la
+passphrase.
+
+Par défaut, une destination déjà occupée par un vault est **refusée**. `--replace` restaure
+par-dessus, et **ne supprime jamais** le vault remplacé : il est déplacé à côté, sous un nom qui
+dit ce qu'il est, et vault vous annonce où.
+
+Les deux commandes fonctionnent en tube, ce qui permet de monter un transfert à la main :
+
+```console
+$ vault export --to - --vault ~/mon-vault | ssh poste-b 'vault import - --to ~/coffres/v'
+```
+
+Cette forme donne **exactement** les mêmes vérifications que `vault send` : le sceau vit dans le
+conteneur, pas dans la commande. La suite de tests l'établit plutôt que cette phrase ne l'affirme.
+
+### Déplacer d'un poste à l'autre : `send` et `fetch`
+
+Prérequis : un accès ssh qui fonctionne déjà entre les deux postes, et `vault` installé des deux
+côtés. **vault n'implémente aucun protocole réseau et n'ouvre aucune socket** : il lance votre
+client ssh et lui parle par des tubes.
+
+```console
+$ vault send ~/mon-vault poste-b:~/coffres/mon-vault
+
+  ⚠  Ce conteneur porte la clé maîtresse de votre vault : […]
+
+Vérification du poste distant…
+2.4 Mo transférés. Vault reçu : poste-b:~/coffres/mon-vault
+```
+
+```console
+$ vault fetch serveur:~/coffres/mon-vault ~/mon-vault
+Vérification du poste distant…
+Vault rapatrié : /home/vous/mon-vault — 143 blob(s), sceau vérifié.
+```
+
+**Aucune passphrase n'est demandée, dans un sens comme dans l'autre.** Le sens du rapatriement
+compte autant que l'autre : c'est celui où votre vault dort sur un serveur que rien ne permet de
+joindre en retour.
+
+| Option | Effet |
+|---|---|
+| `--replace` | Remplace un vault existant à la destination. La confirmation est demandée **avant** que le moindre octet ne parte |
+| `--ssh-option <OPT>` | Passée telle quelle à ssh — `-p2222`, `-oControlMaster=auto`, `-J rebond`. Répétable |
+| `--remote-command <CMD>` | Commande vault à invoquer à distance. `vault` par défaut |
+
+Trois choses à savoir :
+
+- **Rien ne part avant un sondage.** vault ouvre d'abord une session ssh qui ne fait que
+  demander : la destination est-elle libre, et sait-elle lire ce format ? Une destination occupée
+  ou un vault distant trop ancien font échouer **avant** le premier octet.
+- **Deux authentifications ssh, donc.** Si le prix vous paraît élevé, `ControlMaster` d'OpenSSH le
+  ramène à une.
+- **Un transfert interrompu recommence depuis le début.** La reprise n'existe pas : elle
+  supposerait un dialogue entre les deux vault, que ce projet a refusé d'inventer. Un transfert
+  interrompu ne laisse jamais de vault à moitié écrit à la destination — seulement un répertoire
+  d'attente, nommé comme tel, dont la suppression est sans conséquence.
+
+Les questions de votre client ssh — confirmation d'empreinte, passphrase de clé, second facteur —
+vous parviennent normalement : vault n'intercepte pas sa sortie d'erreur. Un changement d'empreinte
+interrompt le transfert, comme il doit.
+
 ### Codes de retour
 
 | Code | Signification |
@@ -236,7 +370,13 @@ jamais faire taire les avertissements.
 | 4 | Vault déjà ouvert par une autre instance |
 | 5 | Vault ou entrée introuvable |
 | 6 | Espace disque insuffisant |
-| 7 | Version de format non gérée |
+| 7 | Version de format non gérée — de vault ou de conteneur |
+| 8 | Destination déjà occupée par un vault |
+| 9 | Échec du transport — ssh absent, commande distante introuvable, canal rompu |
+
+Lorsqu'un poste distant refuse pour une autre raison, **son** code de retour est celui qui remonte,
+tel quel : vault ne réinterprète pas un verdict qu'il n'a pas rendu, et la cause que la destination
+a nommée vous est déjà parvenue par l'erreur standard.
 
 Le code 3 et son message sont **identiques** que la passphrase soit fausse ou que le vault ait été
 altéré. C'est délibéré : distinguer les deux renseignerait un attaquant sur ce qu'il a déjà
@@ -296,8 +436,15 @@ spécification publie en outre des **vecteurs de test** — valeurs intermédiai
 dérivation — qui vous permettent de situer l'étape exacte où votre propre implémentation
 divergerait, sans exécuter vault.
 
+**Le format d'export aussi.** Un conteneur de référence, produit une fois et **jamais régénéré**,
+est dépaqueté à chaque intégration par un second programme écrit depuis le seul
+[`docs/conteneur.md`](docs/conteneur.md) — puis le vault qui en sort est déchiffré par le premier.
+Aucune ligne du logiciel n'intervient dans cette chaîne : un document inexact ou incomplet la fait
+échouer.
+
 **Le logiciel refuse ce qu'il ne comprend pas.** Chaque intégration rejoue un corpus permanent
-d'entrées hostiles sur les quatre surfaces de décodage, et vérifie qu'aucune altération ne passe.
+d'entrées hostiles sur les **cinq** surfaces de décodage — l'en-tête, l'index, les chemins, les
+blobs, et désormais le conteneur d'export —, et vérifie qu'aucune altération ne passe.
 L'exploration engendrée et les campagnes guidées qui complétaient ce corpus **ont été retirées le
 2026-08-09** : ce qui subsiste rejoue ce qui a déjà compté, et ne découvre rien de neuf. L'étendue
 exacte de ce qui a été exploré — et ce que cela n'établit pas — est consignée dans

@@ -134,6 +134,23 @@ pub enum Error {
     #[error("la destination contient déjà un vault")]
     DestinationOccupied,
 
+    /// La commande distante a refusé, en nommant sa cause **sur le terminal de
+    /// l'utilisateur** (FR-029b).
+    ///
+    /// FR-029a réduit tout le compte rendu de la destination à son code de
+    /// retour : il est donc propagé **tel quel** plutôt que traduit. Inventer
+    /// une correspondance ici reviendrait à réinterpréter un verdict qu'on n'a
+    /// pas rendu, et à perdre les codes qu'une version distante ultérieure
+    /// pourrait employer.
+    ///
+    /// Ce variant n'ajoute **aucun code de retour** au tableau de D-210 : il
+    /// rend celui que la destination a choisi.
+    #[error("le poste distant a refusé, code de retour {code}")]
+    RemoteFailed {
+        /// Code de retour de la commande distante.
+        code: i32,
+    },
+
     /// Le transport a échoué : client ssh absent, commande distante
     /// introuvable, canal rompu (XFR-027).
     ///
@@ -194,6 +211,7 @@ mod tests {
             .to_string(),
             Error::Corrupted.to_string(),
             Error::DestinationOccupied.to_string(),
+            Error::RemoteFailed { code: 8 }.to_string(),
             Error::TransportFailed.to_string(),
             Error::InvalidPath.to_string(),
             Error::UnrepresentableName.to_string(),
