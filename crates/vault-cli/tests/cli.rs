@@ -116,7 +116,11 @@ fn sans_terminal_une_saisie_exigee_sort_en_code_2() {
         ])
         .assert()
         .code(2)
-        .stdout(predicates::str::contains("terminal"));
+        // FR-037, XFR-006 : les erreurs passent par l'**erreur** standard. La
+        // sortie standard est réservée à ce qu'une machine lit, et un
+        // conteneur d'export peut l'occuper entière.
+        .stderr(predicates::str::contains("terminal"))
+        .stdout(predicates::str::is_empty());
 }
 
 /// Code 5 : vault introuvable. Le chemin est refusé avant toute saisie, donc
@@ -198,7 +202,8 @@ fn un_vault_deja_ouvert_sort_en_code_4() {
         .args(["ls", "--vault", en_texte(&coffre)])
         .assert()
         .code(4)
-        .stdout(predicates::str::contains("autre processus"));
+        .stderr(predicates::str::contains("autre processus"))
+        .stdout(predicates::str::is_empty());
 
     // Le verrou rendu, la commande retombe sur son refus ordinaire de saisie.
     session.lock();
@@ -235,7 +240,7 @@ fn une_version_de_format_inconnue_sort_en_code_7() {
             .args([commande, "--vault", en_texte(&coffre)])
             .assert()
             .code(7)
-            .stdout(predicates::str::contains("format"));
+            .stderr(predicates::str::contains("format"));
     }
 }
 

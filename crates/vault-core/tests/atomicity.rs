@@ -443,3 +443,231 @@ fn empreinte_du_vault(coffre: &Path) -> Vec<(String, Vec<u8>)> {
     fichiers.sort();
     fichiers
 }
+
+// ---------------------------------------------------------------------------
+// Import et remplacement — T019, FR-015, FR-047, SC-005, quickstart 5
+// ---------------------------------------------------------------------------
+//
+// L'invariant est celui de D-208, et il ne souffre aucune exception : **à
+// chaque point d'écriture, une interruption laisse la destination soit avec un
+// vault complet et ouvrable, soit sans vault ouvrable.** Aucun état
+// intermédiaire n'est jamais visible sous le nom de la destination.
+//
+// Les interruptions sont injectées comme ailleurs dans ce fichier : en rendant
+// **impossible** une écriture donnée. Un conteneur tronqué à chaque octet
+// couvre tous les points d'arrêt de la réception, ce qu'aucune injection
+// ponctuelle ne ferait ; un système de fichiers rendu inécrivable couvre la
+// création du répertoire d'attente.
+
+/// Un vault peuplé, refermé, et le conteneur qu'il produit.
+fn coffre_et_conteneur(atelier: &Path) -> (std::path::PathBuf, Vec<u8>) {
+    let coffre = atelier.join("coffre");
+    let mut vault = Vault::create(&coffre, passphrase(), params()).expect("créable");
+    for (nom, contenu) in [("note.txt", &b"une note"[..]), ("gros.bin", &[0x2a; 9000])] {
+        let source = atelier.join(nom);
+        std::fs::write(&source, contenu).expect("écrivable");
+        vault
+            .add_file(&source, &chemin(nom), AddMode::Copy, OnConflict::Fail)
+            .expect("ajoutable");
+    }
+    vault.lock();
+
+    let mut conteneur = Vec::new();
+    Vault::export(&coffre, vault_core::ExportEnvelope::Source, &mut conteneur).expect("exportable");
+    (coffre, conteneur)
+}
+
+/// Vrai s'il existe à cet emplacement un vault **ouvrable**.
+fn vault_ouvrable(chemin: &Path) -> bool {
+    Vault::open(chemin)
+        .and_then(|vault| vault.unlock(passphrase()))
+        .is_ok()
+}
+
+/// **FR-015, SC-005 : à chaque point d'interruption de la réception, la
+/// destination reste sans vault ouvrable.**
+///
+/// Le conteneur est tronqué à *chaque* longueur possible. C'est la forme la
+/// plus exigeante du test : elle couvre l'arrêt au milieu de l'en-tête, d'un
+/// cadre, d'une charge, et juste avant le sceau — sans qu'aucun de ces points
+/// n'ait eu à être nommé.
+#[test]
+fn import_toute_troncature_ne_laisse_aucun_vault_ouvrable() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let (_, conteneur) = coffre_et_conteneur(atelier.path());
+    let cible = atelier.path().join("restaure");
+
+    for coupe in 0..conteneur.len() {
+        let resultat = Vault::import(
+            &mut &conteneur[..coupe],
+            &cible,
+            vault_core::ImportPolicy::Refuse,
+        );
+        assert!(
+            resultat.is_err(),
+            "un conteneur tronqué à {coupe} a été accepté"
+        );
+        assert!(
+            !cible.exists(),
+            "un vault est apparu après une troncature à {coupe}"
+        );
+    }
+
+    // Le conteneur entier, lui, aboutit : la boucle ci-dessus n'a pas refusé
+    // par un effet de bord qui rendrait tout import impossible.
+    Vault::import(
+        &mut &conteneur[..],
+        &cible,
+        vault_core::ImportPolicy::Refuse,
+    )
+    .expect("importable");
+    assert!(vault_ouvrable(&cible));
+}
+
+/// **Un remplacement interrompu ne perd jamais l'ancien vault.** La séquence de
+/// D-208 déplace avant de mettre en place ; à toute interruption, l'ancien est
+/// retrouvé — sous son nom d'origine, ou sous son nom de remplacement.
+#[test]
+fn import_un_remplacement_interrompu_conserve_l_ancien_vault() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let (coffre, conteneur) = coffre_et_conteneur(atelier.path());
+
+    // L'ancien vault reçoit un marqueur, pour être reconnaissable ensuite.
+    let source = atelier.path().join("marqueur.txt");
+    std::fs::write(&source, b"marqueur").expect("écrivable");
+    let mut session = Vault::open(&coffre)
+        .expect("ouvrable")
+        .unlock(passphrase())
+        .expect("déverrouillable");
+    session
+        .add_file(
+            &source,
+            &chemin("marqueur.txt"),
+            AddMode::Copy,
+            OnConflict::Fail,
+        )
+        .expect("ajoutable");
+    session.lock();
+    let ancien = repertoire(&coffre);
+
+    // Chaque troncature interrompt la réception avant la bascule : l'ancien
+    // vault est intact sous son nom d'origine, et rien n'a bougé.
+    for coupe in [0, conteneur.len() / 3, conteneur.len() - 1] {
+        assert!(
+            Vault::import(
+                &mut &conteneur[..coupe],
+                &coffre,
+                vault_core::ImportPolicy::Replace
+            )
+            .is_err()
+        );
+        assert_eq!(repertoire(&coffre), ancien, "coupé à {coupe}");
+        assert!(vault_ouvrable(&coffre));
+    }
+
+    // Et le remplacement mené à son terme retrouve l'ancien **à côté**, complet
+    // et ouvrable : il a été déplacé, jamais supprimé (FR-013b).
+    let ecarte = Vault::import(
+        &mut &conteneur[..],
+        &coffre,
+        vault_core::ImportPolicy::Replace,
+    )
+    .expect("remplaçable")
+    .replaced
+    .expect("l'ancien a été déplacé");
+
+    assert_eq!(repertoire(&ecarte), ancien);
+    assert!(vault_ouvrable(&ecarte));
+    assert!(vault_ouvrable(&coffre));
+}
+
+/// Contenu d'un répertoire de vault, `.lock` excepté.
+fn repertoire(coffre: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut contenu: Vec<(String, Vec<u8>)> = walkdir::WalkDir::new(coffre)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+        .filter(|entree| entree.file_type().is_file())
+        .map(|entree| {
+            (
+                entree
+                    .path()
+                    .strip_prefix(coffre)
+                    .expect("sous le vault")
+                    .to_string_lossy()
+                    .into_owned(),
+                std::fs::read(entree.path()).expect("lisible"),
+            )
+        })
+        .filter(|(nom, _)| nom != ".lock")
+        .collect();
+    contenu.sort();
+    contenu
+}
+
+/// Un échec d'écriture pendant la réception ne laisse rien à destination.
+///
+/// Le levier est celui du reste de ce fichier : rendre le répertoire parent
+/// inécrivable, ce qui fait échouer la création du répertoire d'attente.
+#[cfg(unix)]
+#[test]
+fn import_un_parent_inecrivable_ne_laisse_rien() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let (_, conteneur) = coffre_et_conteneur(atelier.path());
+
+    let parent = atelier.path().join("verrouille");
+    std::fs::create_dir(&parent).expect("créable");
+    let cible = parent.join("restaure");
+
+    let mut permissions = std::fs::metadata(&parent).expect("lisible").permissions();
+    permissions.set_mode(0o500);
+    std::fs::set_permissions(&parent, permissions).expect("modifiable");
+
+    let resultat = Vault::import(
+        &mut &conteneur[..],
+        &cible,
+        vault_core::ImportPolicy::Refuse,
+    );
+
+    let mut permissions = std::fs::metadata(&parent).expect("lisible").permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&parent, permissions).expect("modifiable");
+
+    assert!(matches!(resultat, Err(Error::Io(_))), "{resultat:?}");
+    assert!(!cible.exists());
+    assert_eq!(
+        std::fs::read_dir(&parent).expect("listable").count(),
+        0,
+        "aucun répertoire d'attente ne doit subsister"
+    );
+}
+
+/// FR-035 : sur un chemin d'erreur **propre**, aucun répertoire d'attente ne
+/// subsiste. Il ne survit qu'à une interruption du processus — le seul cas où
+/// il y a quelque chose à identifier.
+#[test]
+fn import_un_echec_propre_ne_laisse_aucun_repertoire_d_attente() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let (_, conteneur) = coffre_et_conteneur(atelier.path());
+
+    for coupe in [conteneur.len() / 2, conteneur.len() - 1] {
+        assert!(
+            Vault::import(
+                &mut &conteneur[..coupe],
+                &atelier.path().join("restaure"),
+                vault_core::ImportPolicy::Refuse
+            )
+            .is_err()
+        );
+    }
+
+    let residus: Vec<String> = std::fs::read_dir(atelier.path())
+        .expect("listable")
+        .filter_map(std::result::Result::ok)
+        .map(|entree| entree.file_name().to_string_lossy().into_owned())
+        .filter(|nom| nom.contains(".vault-entrant-"))
+        .collect();
+    assert!(residus.is_empty(), "{residus:?}");
+}

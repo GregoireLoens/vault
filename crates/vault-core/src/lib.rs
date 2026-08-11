@@ -37,10 +37,15 @@ pub use secrecy::{ExposeSecret, SecretString};
 pub use crate::crypto::kdf::KdfParams;
 pub use crate::error::{Error, Result};
 pub use crate::format::blob::{BLOB_ID_LEN, BlobId, MAX_FILE_SIZE};
+pub use crate::format::container::{
+    CONTAINER_END, CONTAINER_MAGIC, CONTAINER_VERSION, ContainerHeader, MemberKind,
+};
 pub use crate::format::index::EntryKind;
 pub use crate::format::path::{NamingRules, VaultPath};
 pub use crate::format::version::FORMAT_VERSION;
 pub use crate::fs::shred::{ShredCapability, shred_capability};
+pub use crate::ops::export::{ExportEnvelope, ExportSummary};
+pub use crate::ops::import::{ImportPolicy, ImportSummary};
 
 use crate::crypto::keys::MasterKey;
 use crate::format::header::Header;

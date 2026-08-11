@@ -35,6 +35,17 @@ pub fn stdin_is_terminal() -> bool {
     std::io::stdin().is_terminal()
 }
 
+/// Vrai si la sortie standard est un terminal.
+///
+/// Sert XFR-005 : `vault export --to -` refuse d'écrire des octets binaires sur
+/// un terminal. **La détection est ici, la décision est dans
+/// [`crate::cmd::export`]** — et c'est cette décision qui est mesurée, ce
+/// fichier étant le seul exclu de la couverture.
+#[must_use]
+pub fn stdout_is_terminal() -> bool {
+    std::io::stdout().is_terminal()
+}
+
 /// Lit une passphrase sur le terminal, sans écho.
 ///
 /// # Errors

@@ -4,6 +4,7 @@
 //! IV exige qu'il permette de déchiffrer un vault sans exécuter vault.
 
 pub(crate) mod blob;
+pub(crate) mod container;
 pub(crate) mod header;
 pub(crate) mod index;
 pub(crate) mod path;

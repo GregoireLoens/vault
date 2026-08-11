@@ -43,6 +43,12 @@ impl CliError {
                 Error::NotFound => 5,
                 Error::InsufficientSpace { .. } => 6,
                 Error::UnsupportedFormatVersion { .. } => 7,
+                // XFR-060 : un variant **distinct** d'`AlreadyExists`, qui
+                // continue de rendre 1 pour la collision d'entrée d'`add
+                // --on-conflict fail`. Les confondre ferait changer le code de
+                // retour d'`add` (D-210).
+                Error::DestinationOccupied => 8,
+                Error::TransportFailed => 9,
                 Error::WeakPassphrase { .. } | Error::InvalidPath | Error::InvalidKdfParams => 2,
                 // Corruption, entrée non gérée, dossier peuplé, nom
                 // irreprésentable, entrée-sortie : erreur générique.
@@ -68,6 +74,14 @@ impl CliError {
             Self::Core(Error::DirectoryNotEmpty) => {
                 "Ce dossier n'est pas vide. Ajoutez --recursive pour le supprimer avec tout \
 ce qu'il contient."
+                    .to_owned()
+            }
+            // XFR-012 : le refus le plus courant de l'import. Le message dit
+            // quoi faire, comme celui du dossier peuplé, et ne nomme rien du
+            // contenu de la destination (C-025, CLI-021).
+            Self::Core(Error::DestinationOccupied) => {
+                "Un vault occupe déjà cette destination. Ajoutez --replace pour le remplacer : \
+l'ancien sera déplacé, jamais supprimé."
                     .to_owned()
             }
             Self::Core(Error::UnrepresentableName) => {
@@ -106,7 +120,7 @@ mod tests {
 
     #[test]
     fn chaque_erreur_a_le_code_du_contrat() {
-        let cas: [(CliError, i32); 13] = [
+        let cas: [(CliError, i32); 15] = [
             (CliError::Core(Error::Authentication), 3),
             (CliError::Core(Error::AlreadyInUse), 4),
             (CliError::Core(Error::NotFound), 5),
@@ -127,6 +141,8 @@ mod tests {
             (CliError::Core(Error::WeakPassphrase { minimum: 12 }), 2),
             (CliError::Core(Error::InvalidPath), 2),
             (CliError::Core(Error::InvalidKdfParams), 2),
+            (CliError::Core(Error::DestinationOccupied), 8),
+            (CliError::Core(Error::TransportFailed), 9),
             (CliError::Core(Error::UnrepresentableName), 1),
             (CliError::Core(Error::Corrupted), 1),
             (CliError::Usage("mauvais argument".to_owned()), 2),
@@ -135,7 +151,7 @@ mod tests {
         ];
 
         let codes: Vec<i32> = cas.iter().map(|(erreur, _)| erreur.code()).collect();
-        assert_eq!(codes, vec![3, 4, 5, 6, 7, 2, 2, 2, 1, 1, 2, 2, 2]);
+        assert_eq!(codes, vec![3, 4, 5, 6, 7, 2, 2, 2, 8, 9, 1, 1, 2, 2, 2]);
         for (erreur, _) in &cas {
             assert!(!erreur.message().is_empty());
             assert!(!format!("{erreur:?}").is_empty());
@@ -145,6 +161,33 @@ mod tests {
         assert_eq!(io.code(), 1);
         assert!(io.message().contains("disque"));
         assert_eq!(CliError::from(Error::NotFound).code(), 5);
+    }
+
+    /// XFR-060 : les codes 8 et 9 s'ajoutent **sans** que les codes 0 à 7
+    /// changent de sens. Le point de vigilance de D-210 se vérifie ici :
+    /// `AlreadyExists` — la collision d'entrée d'`add --on-conflict fail` —
+    /// rend toujours 1, et `DestinationOccupied` est un variant distinct.
+    #[test]
+    fn les_codes_ajoutes_ne_deplacent_aucun_code_existant() {
+        assert_eq!(CliError::Core(Error::AlreadyExists).code(), 1);
+        assert_eq!(CliError::Core(Error::DestinationOccupied).code(), 8);
+        assert_eq!(CliError::Core(Error::TransportFailed).code(), 9);
+
+        // Les deux erreurs sont bien distinctes, et pas deux noms de la même.
+        assert_ne!(
+            CliError::Core(Error::AlreadyExists).code(),
+            CliError::Core(Error::DestinationOccupied).code()
+        );
+        assert_ne!(
+            CliError::Core(Error::AlreadyExists).message(),
+            CliError::Core(Error::DestinationOccupied).message()
+        );
+
+        // XFR-012 : le message dit quoi faire, et ne nomme rien de ce que la
+        // destination contient (C-025, CLI-021).
+        let message = CliError::Core(Error::DestinationOccupied).message();
+        assert!(message.contains("--replace"), "{message}");
+        assert!(message.contains("jamais supprimé"), "{message}");
     }
 
     /// CLI-015 : le message dit quoi faire, et ne dit **pas** combien

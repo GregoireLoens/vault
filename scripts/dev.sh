@@ -81,12 +81,28 @@ case "$1" in
         set -- bash -c '
             set -e
             sortie=$(mktemp -d)
-            trap "rm -rf $sortie" EXIT
+            depaquete=$(mktemp -d)
+            depuis_conteneur=$(mktemp -d)
+            trap "rm -rf $sortie $depaquete $depuis_conteneur" EXIT
+
+            # Le vault de référence, depuis le seul docs/format.md.
             echo "vault fixture v1 passphrase de reference" \
               | /opt/verification/bin/python verification/dechiffreur/dechiffrer.py \
                   crates/vault-core/tests/fixtures/v1 "$sortie"
             /opt/verification/bin/python verification/dechiffreur/verifier.py \
               verification/dechiffreur/attendu.json "$sortie"
+
+            # Le conteneur de référence, dépaqueté depuis le seul
+            # docs/conteneur.md, puis déchiffré depuis le seul docs/format.md.
+            # Les deux documents sont ainsi éprouvés bout à bout, sans qu aucune
+            # ligne de Rust n intervienne.
+            /opt/verification/bin/python verification/dechiffreur/conteneur.py \
+              crates/vault-core/tests/fixtures/container-v1/container.vaultx "$depaquete"
+            echo "vault fixture v1 passphrase de reference" \
+              | /opt/verification/bin/python verification/dechiffreur/dechiffrer.py \
+                  "$depaquete" "$depuis_conteneur"
+            /opt/verification/bin/python verification/dechiffreur/verifier.py \
+              verification/dechiffreur/attendu.json "$depuis_conteneur"
         '
         ;;
     shell)

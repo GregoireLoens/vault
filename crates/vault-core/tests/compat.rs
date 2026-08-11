@@ -222,3 +222,147 @@ fn fichiers_de(racine: &Path) -> Vec<PathBuf> {
     chemins.sort();
     chemins
 }
+
+// ---------------------------------------------------------------------------
+// Le conteneur de référence — T042, FR-017, FR-045
+// ---------------------------------------------------------------------------
+//
+// Même raisonnement que pour les vaults de référence, appliqué au second format
+// que le projet publie. Le conteneur de `fixtures/container-v1/` a été produit
+// une fois, et **ne sera jamais régénéré** : c'est ce qui fait de la
+// compatibilité ascendante du format de conteneur une vérification plutôt
+// qu'une déclaration.
+//
+// Les vecteurs publiés dans `docs/conteneur.md` §7 sont vérifiés ici, et non
+// seulement le dépaquetage : un document dont les valeurs auraient vieilli
+// serait un document faux, et le principe IV promet qu'il ne l'est pas.
+
+/// Emplacement du conteneur de référence, relatif à la racine du crate.
+const CONTENEUR_V1: &str = "tests/fixtures/container-v1/container.vaultx";
+
+/// Vecteurs publiés dans `docs/conteneur.md` §7.
+const TAILLE_PUBLIEE: usize = 85_132;
+const MEMBRES_PUBLIES: u64 = 6;
+const PAYLOAD_PUBLIE: u64 = 84_686;
+const SCEAU_DEBUT_PUBLIE: usize = 85_063;
+const EMPREINTE_PUBLIEE: &str = "72125c7136c7e21f205287bc1ed27864a96f9b7fd1edbd133c88d03e47c366c4";
+const EMPREINTE_DU_CORPS_PUBLIEE: &str =
+    "e0e786ffc08430169660432e78ee12071115873e85d44af3a72dac86e13715ef";
+
+fn hex(octets: &[u8]) -> String {
+    use std::fmt::Write as _;
+    octets.iter().fold(String::new(), |mut sortie, octet| {
+        let _ = write!(sortie, "{octet:02x}");
+        sortie
+    })
+}
+
+/// Les grandeurs publiées dans `docs/conteneur.md` §7 sont celles du fichier.
+///
+/// Sans ce test, la moitié des vecteurs du document normatif vieillirait sans
+/// que rien ne le signale.
+#[test]
+fn les_vecteurs_publies_sont_ceux_du_conteneur_de_reference() {
+    let octets = std::fs::read(CONTENEUR_V1).expect("conteneur de référence lisible");
+
+    assert_eq!(octets.len(), TAILLE_PUBLIEE, "taille publiée");
+    assert_eq!(
+        hex(blake3::hash(&octets).as_bytes()),
+        EMPREINTE_PUBLIEE,
+        "empreinte du conteneur entier"
+    );
+    assert_eq!(
+        hex(blake3::hash(&octets[..SCEAU_DEBUT_PUBLIE]).as_bytes()),
+        EMPREINTE_DU_CORPS_PUBLIEE,
+        "empreinte du corps, celle que le sceau porte"
+    );
+
+    // Le sceau publié, à l'octet près.
+    let sceau = &octets[SCEAU_DEBUT_PUBLIE..];
+    assert_eq!(sceau.len(), 69, "longueur du sceau publiée");
+    assert!(
+        sceau.starts_with(b"\xa3\x63end\x48VAULTEND"),
+        "{:?}",
+        &sceau[..14]
+    );
+    assert!(
+        sceau.ends_with(
+            &(0..32)
+                .map(
+                    |i| u8::from_str_radix(&EMPREINTE_DU_CORPS_PUBLIEE[i * 2..i * 2 + 2], 16)
+                        .expect("hexadécimal")
+                )
+                .collect::<Vec<u8>>()
+        ),
+        "le sceau porte l'empreinte du corps"
+    );
+}
+
+/// FR-017, FR-045 : le conteneur de référence se dépaquette, et redonne le
+/// vault de référence **octet pour octet**, `.lock` excepté.
+#[test]
+fn le_conteneur_de_reference_redonne_le_vault_de_reference() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let octets = std::fs::read(CONTENEUR_V1).expect("conteneur de référence lisible");
+
+    let restaure = atelier.path().join("restaure");
+    let resume = Vault::import(
+        &mut &octets[..],
+        &restaure,
+        vault_core::ImportPolicy::Refuse,
+    )
+    .expect("le conteneur de référence doit rester lisible");
+
+    assert_eq!(resume.blob_count + 2, MEMBRES_PUBLIES, "membres publiés");
+    assert_eq!(resume.payload_bytes, PAYLOAD_PUBLIE, "volume publié");
+
+    // Octet pour octet contre la référence figée, `.lock` excepté.
+    let attendu = repertoire_sans_verrou(&Path::new(FIXTURES).join("v1"));
+    assert_eq!(repertoire_sans_verrou(&restaure), attendu);
+
+    // Et il s'ouvre : le vault reconstitué est utilisable, pas seulement
+    // identique.
+    let session = Vault::open(&restaure)
+        .expect("ouvrable")
+        .unlock(SecretString::from(REFERENCES[0].passphrase.to_owned()))
+        .expect("déverrouillable");
+    assert_eq!(session.list(None).len(), 5);
+
+    let sortie = atelier.path().join("sortie");
+    std::fs::create_dir(&sortie).expect("créable");
+    for (nom, contenu) in contenu_v1() {
+        session
+            .extract(&chemin(nom), &sortie, OnConflict::Fail)
+            .expect("extractible");
+        let feuille = nom.rsplit('/').next().expect("un nom");
+        assert_eq!(
+            std::fs::read(sortie.join(feuille)).expect("lisible"),
+            contenu,
+            "{nom}"
+        );
+    }
+}
+
+/// Contenu d'un répertoire de vault, `.lock` excepté.
+fn repertoire_sans_verrou(coffre: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut contenu: Vec<(String, Vec<u8>)> = walkdir::WalkDir::new(coffre)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+        .filter(|entree| entree.file_type().is_file())
+        .map(|entree| {
+            (
+                entree
+                    .path()
+                    .strip_prefix(coffre)
+                    .expect("sous le vault")
+                    .to_string_lossy()
+                    .into_owned(),
+                std::fs::read(entree.path()).expect("lisible"),
+            )
+        })
+        .filter(|(nom, _)| nom != ".lock")
+        .collect();
+    contenu.sort();
+    contenu
+}

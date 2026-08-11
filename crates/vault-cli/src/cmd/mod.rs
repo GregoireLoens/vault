@@ -7,7 +7,9 @@
 
 pub mod add;
 pub mod create;
+pub mod export;
 pub mod extract;
+pub mod import;
 pub mod info;
 pub mod ls;
 pub mod passwd;
