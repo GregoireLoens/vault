@@ -188,14 +188,21 @@ fn recevoir<R: Read>(reader: &mut ContainerReader<R>, attente: &Path) -> Result<
 
         let mut fichier = std::fs::File::create(&cible)?;
         reader.copy_payload(&frame, &mut fichier)?;
+        fichier.sync_all()?;
+
         if frame.kind == MemberKind::Blob {
             // `docs/format.md` §6.4 : la date de modification d'un blob est
             // ramenée à l'époque Unix. Elle ne dit rien du contenu, et la
             // laisser suivre l'instant de réception en ferait une métadonnée
             // sur l'utilisateur.
+            //
+            // **L'ordre compte, et il n'est pas indifférent à la plateforme.**
+            // NTFS met à jour la date de dernière écriture au moment où les
+            // données atteignent le disque : la poser avant le `sync_all` la
+            // ferait écraser par l'instant de la synchronisation. Elle est donc
+            // posée **après**, en dernier geste sur ce fichier.
             fichier.set_modified(std::time::UNIX_EPOCH)?;
         }
-        fichier.sync_all()?;
     }
     Ok(blob_count)
 }
