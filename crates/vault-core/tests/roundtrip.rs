@@ -14,7 +14,10 @@
 use std::path::Path;
 
 use proptest::prelude::*;
-use vault_core::{AddMode, EntryKind, KdfParams, OnConflict, SecretString, Vault, VaultPath};
+use vault_core::{
+    AddMode, EntryKind, ExportEnvelope, ImportPolicy, KdfParams, OnConflict, SecretString, Vault,
+    VaultPath,
+};
 
 /// Paramètres Argon2id minimaux. Ces tests vérifient la fidélité de
 /// l'aller-retour, pas le coût d'une attaque par force brute ; employer
@@ -371,4 +374,253 @@ proptest! {
         let listees: Vec<VaultPath> = vault.list(None).into_iter().map(|e| e.path).collect();
         prop_assert!(listees.contains(&destination));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Aller-retour export/import — T015, principe VI, FR-044, SC-001, SC-014
+// ---------------------------------------------------------------------------
+//
+// Le principe VI exige « un test de round-trip export/import vérifiant la
+// restitution octet pour octet du contenu et de l'arborescence » depuis la
+// ratification. Il n'existait pas — non par négligence, mais parce que la
+// fonctionnalité qu'il doit éprouver n'existait pas. Le voici.
+//
+// **La comparaison porte sur le répertoire du vault**, et non seulement sur ce
+// qu'un déverrouillage donne à voir : les blobs orphelins doivent survivre au
+// voyage, puisqu'un export copie fidèlement (FR-008). Le seul fichier écarté
+// est `.lock`, qui décrit l'état d'exécution d'un poste et non le contenu d'un
+// vault (FR-008a).
+
+/// Contenu du répertoire d'un vault, `.lock` excepté.
+fn repertoire_de_vault(coffre: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+    let mut contenu: Vec<(std::path::PathBuf, Vec<u8>)> = walkdir::WalkDir::new(coffre)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+        .filter(|entree| entree.file_type().is_file())
+        .map(|entree| {
+            (
+                entree
+                    .path()
+                    .strip_prefix(coffre)
+                    .expect("sous le vault")
+                    .to_path_buf(),
+                std::fs::read(entree.path()).expect("lisible"),
+            )
+        })
+        .filter(|(chemin, _)| chemin != Path::new(".lock"))
+        .collect();
+    contenu.sort();
+    contenu
+}
+
+/// Le test que le principe VI attend : exporter, **supprimer le vault
+/// d'origine**, réimporter, et comparer.
+///
+/// Le corpus couvre ce que le quickstart énumère : arborescence profonde, noms
+/// non conformes à l'UTF-8, fichier vide, entrée de 0 octet, dossier sans
+/// contenu. Le vault vide, lui, a son propre test.
+#[test]
+fn export_import_restitue_le_vault_octet_pour_octet() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let coffre = atelier.path().join("coffre");
+    let mut vault = Vault::create(&coffre, passphrase(), params()).expect("vault créable");
+
+    // Une arborescence profonde, un dossier sans contenu, et des fichiers de
+    // tailles variées — dont un vide.
+    let source = atelier.path().join("corpus");
+    std::fs::create_dir_all(source.join("a/b/c/d/e")).expect("créable");
+    std::fs::create_dir(source.join("dossier-vide")).expect("créable");
+    std::fs::write(source.join("a/b/c/d/e/profond.bin"), [0x5a; 12_345]).expect("écrivable");
+    std::fs::write(source.join("a/b/vide"), b"").expect("écrivable");
+    std::fs::write(source.join("accentué — é à ù.txt"), "contenu\n").expect("écrivable");
+    vault
+        .add_dir(
+            &source,
+            &VaultPath::root(),
+            AddMode::Copy,
+            OnConflict::Fail,
+            &mut |_| {},
+        )
+        .expect("ajoutable");
+
+    // VR-I1 : les noms sont conservés en octets bruts. Un nom non conforme à
+    // l'UTF-8 doit donc faire le voyage comme les autres, et il est ajouté par
+    // le chemin de vault plutôt que depuis le disque.
+    //
+    // **Il vit à part, sous `hostile/`, et c'est délibéré** : ce nom n'est
+    // représentable ni sur APFS ni sur NTFS, et l'extraire y échouerait par
+    // `UnrepresentableName`. Le mettre dans le corpus rendrait donc ce test
+    // vert sur Linux et rouge ailleurs — pour une raison qui n'a rien à voir
+    // avec ce qu'il éprouve. Sa survie se vérifie par l'**index**, comme le
+    // fait déjà `tout_nom_hostile_traverse_l_index_intact`.
+    let hostile = atelier.path().join("hostile.bin");
+    std::fs::write(&hostile, b"octets bruts").expect("écrivable");
+    vault
+        .add_file(
+            &hostile,
+            &chemin(&[b"hostile", b"\xff\xfe non-utf8"]),
+            AddMode::Copy,
+            OnConflict::Fail,
+        )
+        .expect("ajoutable");
+
+    let entrees_attendues = vault.list(None).len();
+    vault.lock();
+
+    // Un blob qu'aucune entrée ne référence : un export copie fidèlement, donc
+    // il part lui aussi (FR-008).
+    let orphelin = coffre
+        .join("objects")
+        .join("0000000000000000000000000000000000000000000000000000000000000001");
+    std::fs::write(&orphelin, b"dechet inerte").expect("écrivable");
+
+    let avant = repertoire_de_vault(&coffre);
+
+    let mut conteneur = Vec::new();
+    let resume =
+        Vault::export(&coffre, ExportEnvelope::Source, &mut conteneur).expect("exportable");
+
+    // Le vault d'origine disparaît : rien de ce qui suit ne peut s'y adosser.
+    std::fs::remove_dir_all(&coffre).expect("supprimable");
+
+    let restaure = atelier.path().join("restaure");
+    let recu =
+        Vault::import(&mut &conteneur[..], &restaure, ImportPolicy::Refuse).expect("importable");
+    assert_eq!(recu.blob_count, resume.blob_count);
+
+    // SC-001 : le répertoire est restitué octet pour octet, orphelin compris.
+    assert_eq!(repertoire_de_vault(&restaure), avant);
+
+    // Et il est utilisable : il s'ouvre avec la passphrase du vault source, et
+    // son contenu ressort identique au corpus déposé.
+    let session = Vault::open(&restaure)
+        .expect("ouvrable")
+        .unlock(passphrase())
+        .expect("déverrouillable");
+    assert_eq!(session.list(None).len(), entrees_attendues);
+
+    // L'extraction porte sur le corpus **représentable**, entrée par entrée :
+    // extraire la racine emporterait le nom non conforme à l'UTF-8, que ni
+    // APFS ni NTFS n'acceptent.
+    let sortie = atelier.path().join("sortie");
+    std::fs::create_dir(&sortie).expect("créable");
+    for entree in [
+        chemin(&[b"a"]),
+        chemin(&["accentué — é à ù.txt".as_bytes()]),
+        chemin(&[b"dossier-vide"]),
+    ] {
+        session
+            .extract(&entree, &sortie, OnConflict::Fail)
+            .expect("extractible");
+    }
+
+    // Le contenu ressort identique, arborescence profonde et fichier vide
+    // compris.
+    for relatif in ["a/b/c/d/e/profond.bin", "a/b/vide", "accentué — é à ù.txt"] {
+        assert_eq!(
+            std::fs::read(sortie.join(relatif)).expect("extrait lisible"),
+            std::fs::read(source.join(relatif)).expect("original lisible"),
+            "{relatif}"
+        );
+    }
+    assert!(
+        sortie.join("dossier-vide").is_dir(),
+        "un dossier sans contenu"
+    );
+
+    // VR-I1 : le nom non conforme à l'UTF-8 a traversé le conteneur intact. Il
+    // se vérifie par l'index, jamais par le disque.
+    assert!(
+        session
+            .stat(&chemin(&[b"hostile", b"\xff\xfe non-utf8"]))
+            .is_ok(),
+        "le nom brut doit survivre au voyage"
+    );
+}
+
+/// Un vault vide fait l'aller-retour : c'est licite, et l'import redonne un
+/// vault vide et ouvrable.
+#[test]
+fn export_import_d_un_vault_vide() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let coffre = atelier.path().join("coffre");
+    Vault::create(&coffre, passphrase(), params())
+        .expect("créable")
+        .lock();
+    let avant = repertoire_de_vault(&coffre);
+
+    let mut conteneur = Vec::new();
+    Vault::export(&coffre, ExportEnvelope::Source, &mut conteneur).expect("exportable");
+
+    let restaure = atelier.path().join("restaure");
+    Vault::import(&mut &conteneur[..], &restaure, ImportPolicy::Refuse).expect("importable");
+
+    assert_eq!(repertoire_de_vault(&restaure), avant);
+    assert!(
+        Vault::open(&restaure)
+            .expect("ouvrable")
+            .unlock(passphrase())
+            .expect("déverrouillable")
+            .list(None)
+            .is_empty()
+    );
+}
+
+/// FR-012 : un conteneur produit sous passphrase distincte s'ouvre avec
+/// **cette** passphrase, et le contenu reste celui du vault source — la clé
+/// maîtresse n'a pas changé, seule son enveloppe.
+#[test]
+fn export_import_sous_passphrase_distincte() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let coffre = atelier.path().join("coffre");
+    let mut vault = Vault::create(&coffre, passphrase(), params()).expect("créable");
+    let source = atelier.path().join("note.txt");
+    std::fs::write(&source, b"une note").expect("écrivable");
+    vault
+        .add_file(
+            &source,
+            &chemin(&[b"note.txt"]),
+            AddMode::Copy,
+            OnConflict::Fail,
+        )
+        .expect("ajoutable");
+    vault.lock();
+
+    let distincte = SecretString::from("une toute autre passphrase, longue".to_owned());
+    let mut conteneur = Vec::new();
+    Vault::export(
+        &coffre,
+        ExportEnvelope::NewPassphrase {
+            current: passphrase(),
+            new: SecretString::from("une toute autre passphrase, longue".to_owned()),
+        },
+        &mut conteneur,
+    )
+    .expect("exportable");
+
+    let restaure = atelier.path().join("restaure");
+    Vault::import(&mut &conteneur[..], &restaure, ImportPolicy::Refuse).expect("importable");
+
+    // L'ancienne passphrase n'ouvre plus le vault reconstitué…
+    assert!(
+        Vault::open(&restaure)
+            .expect("ouvrable")
+            .unlock(passphrase())
+            .is_err()
+    );
+    // …et la nouvelle donne accès au même contenu.
+    let session = Vault::open(&restaure)
+        .expect("ouvrable")
+        .unlock(distincte)
+        .expect("déverrouillable");
+    let sortie = atelier.path().join("sortie");
+    std::fs::create_dir(&sortie).expect("créable");
+    session
+        .extract(&chemin(&[b"note.txt"]), &sortie, OnConflict::Fail)
+        .expect("extractible");
+    assert_eq!(
+        std::fs::read(sortie.join("note.txt")).expect("lisible"),
+        b"une note"
+    );
 }

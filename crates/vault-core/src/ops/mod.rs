@@ -11,7 +11,9 @@
 
 pub(crate) mod add;
 pub(crate) mod create;
+pub(crate) mod export;
 pub(crate) mod extract;
+pub(crate) mod import;
 pub(crate) mod list;
 pub(crate) mod rekey;
 pub(crate) mod remove;
@@ -82,6 +84,35 @@ pub(crate) fn strip_prefix(path: &VaultPath, strip: &VaultPath) -> Result<VaultP
         return Err(Error::InvalidPath);
     }
     VaultPath::from_components(path.components().skip(strip.depth()).map(<[u8]>::to_vec))
+}
+
+#[cfg(test)]
+pub(crate) mod serie {
+    //! Sérialisation des tests qui déplacent le **répertoire courant**.
+    //!
+    //! `std::env::set_current_dir` est global au processus : deux tests qui
+    //! l'emploient en parallèle se marchent dessus, et l'un des deux crée son
+    //! vault dans le répertoire de l'autre. Le symptôme est un échec
+    //! **intermittent**, qui dépend de l'ordonnancement des fils — donc de la
+    //! plateforme, ce qui est la pire forme de flottement : vert ici, rouge
+    //! ailleurs, et pour une raison qui n'a rien à voir avec ce qui est
+    //! éprouvé.
+    //!
+    //! Tout test qui déplace le répertoire courant prend donc ce verrou, et le
+    //! garde jusqu'à l'avoir rétabli.
+
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+
+    static VERROU: Mutex<()> = Mutex::new(());
+
+    /// Prend le verrou du répertoire courant.
+    ///
+    /// Un verrou empoisonné par un test qui a paniqué ailleurs ne doit pas
+    /// faire échouer les suivants : ce verrou ne protège aucune donnée, il
+    /// ordonne des effets de bord.
+    pub(crate) fn repertoire_courant() -> MutexGuard<'static, ()> {
+        VERROU.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 #[cfg(test)]

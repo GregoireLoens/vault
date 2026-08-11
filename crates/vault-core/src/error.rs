@@ -123,6 +123,26 @@ pub enum Error {
     #[error("paramètres de dérivation invalides")]
     InvalidKdfParams,
 
+    /// La destination d'un import ou d'un transfert contient déjà un vault
+    /// (FR-013, XFR-012).
+    ///
+    /// **Distincte d'[`Error::AlreadyExists`]**, et ce n'est pas une nuance de
+    /// vocabulaire : `AlreadyExists` rend 1 et sert la collision d'entrée
+    /// d'`add --on-conflict fail`. Réutiliser ce variant ferait changer le code
+    /// de retour de `vault add`, et FR-040 serait enfreint par l'implémentation
+    /// même qui l'énonce (D-210).
+    #[error("la destination contient déjà un vault")]
+    DestinationOccupied,
+
+    /// Le transport a échoué : client ssh absent, commande distante
+    /// introuvable, canal rompu (XFR-027).
+    ///
+    /// Ne parle **pas** du vault mais de ce qui l'entoure. La confondre avec
+    /// une erreur d'entrée-sortie la noierait parmi les défaillances de disque,
+    /// alors qu'un script doit pouvoir la distinguer (D-210).
+    #[error("le transport a échoué")]
+    TransportFailed,
+
     /// Erreur d'entrée-sortie.
     ///
     /// C-025 : ne peut se rapporter qu'à un chemin **hors** du vault — source
@@ -173,6 +193,8 @@ mod tests {
             }
             .to_string(),
             Error::Corrupted.to_string(),
+            Error::DestinationOccupied.to_string(),
+            Error::TransportFailed.to_string(),
             Error::InvalidPath.to_string(),
             Error::UnrepresentableName.to_string(),
             Error::WeakPassphrase { minimum: 12 }.to_string(),

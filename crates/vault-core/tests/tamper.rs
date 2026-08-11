@@ -363,3 +363,186 @@ fn deux_blobs_echanges_sont_detectes() {
         "aucune sortie partielle"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Le conteneur d'export — T014, principe VI
+// ---------------------------------------------------------------------------
+//
+// La propriété est celle de tout ce fichier, posée dans le sens qui vaut pour
+// un coffre-fort : **il n'existe aucun octet du conteneur dont la modification
+// passe inaperçue.** Le balayage est donc exhaustif, un bit retourné à la fois,
+// et non illustratif.
+//
+// Ce que le sceau établit ici est cependant plus étroit que ce que les tags
+// AEAD établissent ailleurs, et la distinction est écrite plutôt que supposée :
+// le sceau détecte une **corruption**, jamais une **falsification** — il n'est
+// pas authentifié par une clé, et quiconque réécrit un conteneur peut le
+// recalculer. Le dernier test de cette section en fait la démonstration.
+
+/// Un vault peuplé, refermé, et le conteneur qu'il produit.
+fn coffre_et_conteneur(atelier: &Path) -> (PathBuf, Vec<u8>) {
+    let coffre = atelier.join("coffre");
+    let mut vault = Vault::create(&coffre, passphrase(), params()).expect("créable");
+    let source = atelier.join("note.txt");
+    std::fs::write(&source, b"une note de reference").expect("écrivable");
+    vault
+        .add_file(
+            &source,
+            &chemin(&[b"note.txt"]),
+            AddMode::Copy,
+            OnConflict::Fail,
+        )
+        .expect("ajoutable");
+    vault.lock();
+
+    let mut conteneur = Vec::new();
+    Vault::export(&coffre, vault_core::ExportEnvelope::Source, &mut conteneur).expect("exportable");
+    (coffre, conteneur)
+}
+
+/// **Un conteneur altéré ne donne jamais de vault**, et un conteneur tronqué
+/// non plus.
+///
+/// Le balayage porte sur les **régions** du flux — en-tête, cadre, charge,
+/// sceau — et non sur chaque octet. L'exhaustivité, elle, vit dans les tests
+/// unitaires de `format::container`, où la lecture se fait en mémoire : chaque
+/// position y coûte quelques microsecondes, contre un import complet ici, donc
+/// un `fsync` par membre. Sur NTFS ce `fsync` se paie en dizaines de
+/// millisecondes, et un balayage exhaustif y prenait plusieurs minutes — pour
+/// répéter à grands frais ce qui est déjà établi ailleurs.
+///
+/// Ce qui reste ici est ce que la lecture en mémoire ne peut pas établir : que
+/// le refus **ne laisse rien** à destination.
+#[test]
+fn aucune_alteration_du_conteneur_ne_passe() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let (_, conteneur) = coffre_et_conteneur(atelier.path());
+    let cible = atelier.path().join("cible");
+
+    let verdicts: Vec<bool> = regions_du_flux(conteneur.len())
+        .into_iter()
+        .map(|position| {
+            let mut altere = conteneur.clone();
+            altere[position] ^= 0x01;
+            let refuse =
+                Vault::import(&mut &altere[..], &cible, vault_core::ImportPolicy::Refuse).is_err();
+            let rien = !cible.exists();
+            drop(std::fs::remove_dir_all(&cible));
+            refuse && rien
+        })
+        .collect();
+
+    assert_eq!(
+        verdicts,
+        vec![true; verdicts.len()],
+        "une altération a été acceptée, ou a laissé quelque chose"
+    );
+}
+
+/// La troncature suit la même règle, sur les mêmes régions.
+#[test]
+fn aucune_troncature_du_conteneur_ne_passe() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let (_, conteneur) = coffre_et_conteneur(atelier.path());
+    let cible = atelier.path().join("cible");
+
+    let verdicts: Vec<bool> = regions_du_flux(conteneur.len())
+        .into_iter()
+        .map(|coupe| {
+            let refuse = Vault::import(
+                &mut &conteneur[..coupe],
+                &cible,
+                vault_core::ImportPolicy::Refuse,
+            )
+            .is_err();
+            refuse && !cible.exists()
+        })
+        .collect();
+
+    assert_eq!(
+        verdicts,
+        vec![true; verdicts.len()],
+        "une troncature a été acceptée, ou a laissé quelque chose"
+    );
+}
+
+/// Une position par **région** d'un conteneur : le tout début, l'en-tête, le
+/// premier cadre, une charge, le milieu, les abords du sceau, et la fin.
+///
+/// Les valeurs viennent de la disposition de `docs/conteneur.md` : l'en-tête
+/// tient dans la soixantaine d'octets, le premier cadre dans la vingtaine qui
+/// suit, et le sceau occupe les soixante-neuf derniers.
+fn regions_du_flux(taille: usize) -> Vec<usize> {
+    let mut positions = vec![
+        0,
+        1,
+        16,
+        50,
+        70,
+        90,
+        taille / 2,
+        taille - 70,
+        taille - 40,
+        taille - 2,
+        taille - 1,
+    ];
+    positions.retain(|position| *position < taille);
+    positions.sort_unstable();
+    positions.dedup();
+    positions
+}
+
+/// **Ce que le sceau ne détecte pas**, et il faut que ce soit écrit ici plutôt
+/// qu'espéré ailleurs : une **falsification**.
+///
+/// Le sceau est un BLAKE3 nu, sans clé. Quiconque réécrit un conteneur peut le
+/// recalculer, et son verdict redevient vert. L'authenticité du contenu vient
+/// des tags AEAD, au déverrouillage — ce que le second temps du test établit.
+#[test]
+fn le_sceau_ne_detecte_pas_une_falsification() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let (coffre, conteneur) = coffre_et_conteneur(atelier.path());
+
+    // La cible est un octet du membre `header`, c'est-à-dire du fichier
+    // `header` du vault, recopié tel quel. Viser au hasard ne conviendrait pas :
+    // le remplissage d'un blob n'est jamais interprété (VR-B3), et l'altérer ne
+    // prouverait rien — c'est exactement le piège que ce fichier documente plus
+    // haut.
+    let membre_header = std::fs::read(coffre.join("header")).expect("lisible");
+    let debut_du_header = conteneur
+        .windows(membre_header.len())
+        .position(|fenetre| fenetre == membre_header)
+        .expect("le membre header figure tel quel dans le conteneur");
+
+    let motif: &[u8] = &[0xa3, 0x63, b'e', b'n', b'd', 0x48];
+    let debut_du_sceau = conteneur
+        .windows(motif.len())
+        .rposition(|fenetre| fenetre == motif)
+        .expect("le sceau termine le flux");
+
+    let mut falsifie = conteneur.clone();
+    falsifie[debut_du_header + membre_header.len() / 2] ^= 0x01;
+
+    // Puis le sceau est **recalculé** — exactement ce que ferait un adversaire
+    // actif, et exactement ce contre quoi un BLAKE3 nu ne protège pas.
+    let empreinte = blake3::hash(&falsifie[..debut_du_sceau]);
+    let fin = falsifie.len();
+    falsifie[fin - 32..].copy_from_slice(empreinte.as_bytes());
+
+    // Le sceau repasse au vert : l'import accepte.
+    let cible = atelier.path().join("falsifie");
+    Vault::import(&mut &falsifie[..], &cible, vault_core::ImportPolicy::Refuse)
+        .expect("le sceau recalculé passe : c'est précisément sa limite");
+
+    // Mais l'authenticité, elle, ne se falsifie pas : les tags AEAD refusent au
+    // déverrouillage, ou l'index devient illisible.
+    let ouverture = Vault::open(&cible).and_then(|vault| vault.unlock(passphrase()));
+    let verdict = match ouverture {
+        Ok(session) => session.verify_content().map(|_| ()),
+        Err(erreur) => Err(erreur),
+    };
+    assert!(
+        matches!(verdict, Err(Error::Authentication | Error::Corrupted)),
+        "la falsification doit être vue au déverrouillage : {verdict:?}"
+    );
+}

@@ -54,6 +54,22 @@ séparément.
 | Contenu différent d'un octet | Le remplissage, la longueur, ou le découpage en morceaux |
 | Nom ou arborescence différents | L'encodage des chemins |
 
+## Deux documents, deux programmes
+
+| Programme | Écrit depuis | Ce qu'il produit |
+|---|---|---|
+| `conteneur.py` | `docs/conteneur.md` **seul** | un répertoire de vault, depuis un conteneur d'export |
+| `dechiffrer.py` | `docs/format.md` **seul** | le contenu en clair, depuis un répertoire de vault |
+
+La séparation n'est pas une commodité : c'est la §1 de `docs/conteneur.md`. *Le déchiffrement d'un
+conteneur est exactement celui d'un vault* — le conteneur **cadre**, il ne chiffre pas. Un
+dépaqueteur qui aurait besoin de connaître la cryptographie du vault signalerait que le format de
+conteneur en a introduit, ce que le principe II proscrit.
+
+Les deux s'enchaînent, et c'est ainsi que la porte les exerce : un conteneur de référence est
+dépaqueté par le premier, puis déchiffré par le second, et le résultat comparé au contenu attendu.
+Aucune ligne de Rust n'intervient dans cette chaîne.
+
 ## Usage
 
 ```bash
@@ -63,10 +79,19 @@ séparément.
 Ou directement, dans le conteneur :
 
 ```bash
+# Le vault de référence, depuis docs/format.md.
 echo "<passphrase>" | /opt/verification/bin/python verification/dechiffreur/dechiffrer.py \
     crates/vault-core/tests/fixtures/v1 /tmp/restitue
 /opt/verification/bin/python verification/dechiffreur/verifier.py \
     verification/dechiffreur/attendu.json /tmp/restitue
+
+# Le conteneur de référence, depuis docs/conteneur.md puis docs/format.md.
+/opt/verification/bin/python verification/dechiffreur/conteneur.py \
+    crates/vault-core/tests/fixtures/container-v1/container.vaultx /tmp/depaquete
+echo "<passphrase>" | /opt/verification/bin/python verification/dechiffreur/dechiffrer.py \
+    /tmp/depaquete /tmp/restitue-conteneur
+/opt/verification/bin/python verification/dechiffreur/verifier.py \
+    verification/dechiffreur/attendu.json /tmp/restitue-conteneur
 ```
 
 ## Ce que cet exercice ne prouve pas

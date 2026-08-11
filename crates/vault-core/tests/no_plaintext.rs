@@ -251,3 +251,115 @@ fn l_en_tete_ne_change_pas_avec_le_contenu() {
         "l'en-tête ne doit pas être réécrit par un ajout"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Le conteneur d'export — T018, FR-046, SC-003
+// ---------------------------------------------------------------------------
+//
+// Le conteneur est un flux **destiné à sortir du poste** : par un disque
+// externe, par une clé USB, par le tube d'un client ssh. La règle d'absence de
+// fuite en clair y vaut donc au moins autant que dans le répertoire du vault,
+// et probablement davantage.
+
+/// FR-046, SC-003 : aucun octet reconnaissable du contenu déposé, du nom
+/// d'origine, du nom de dossier ni de la **passphrase** n'apparaît dans le
+/// conteneur produit.
+#[test]
+fn aucun_contenu_ne_transparait_dans_le_conteneur() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let coffre = session_representative(atelier.path());
+
+    let mut conteneur = Vec::new();
+    vault_core::Vault::export(&coffre, vault_core::ExportEnvelope::Source, &mut conteneur)
+        .expect("exportable");
+    assert!(!conteneur.is_empty());
+
+    for (quoi, aiguille) in [
+        ("le contenu", CONTENU_SECRET),
+        ("le nom de fichier", NOM_SECRET.as_bytes()),
+        ("le nom de dossier", DOSSIER_SECRET.as_bytes()),
+        (
+            "la passphrase",
+            b"passphrase de test bien assez longue".as_slice(),
+        ),
+    ] {
+        assert!(
+            !contient(&conteneur, aiguille),
+            "{quoi} apparaît en clair dans le conteneur"
+        );
+    }
+}
+
+/// La variante sous passphrase distincte ne fait pas fuiter davantage — ni le
+/// contenu, ni l'une ni l'autre des deux passphrases.
+///
+/// Elle mérite son propre test : c'est la seule qui **ouvre** le vault, donc la
+/// seule où une clé maîtresse en clair existe en mémoire pendant l'opération.
+#[test]
+fn aucun_secret_ne_transparait_sous_passphrase_distincte() {
+    const DISTINCTE: &str = "GRUE-une-toute-autre-passphrase";
+
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let coffre = session_representative(atelier.path());
+
+    let mut conteneur = Vec::new();
+    vault_core::Vault::export(
+        &coffre,
+        vault_core::ExportEnvelope::NewPassphrase {
+            current: passphrase(),
+            new: SecretString::from(DISTINCTE.to_owned()),
+        },
+        &mut conteneur,
+    )
+    .expect("exportable");
+
+    for (quoi, aiguille) in [
+        ("le contenu", CONTENU_SECRET),
+        ("le nom de fichier", NOM_SECRET.as_bytes()),
+        (
+            "la passphrase du vault",
+            b"passphrase de test bien assez longue".as_slice(),
+        ),
+        ("la passphrase du conteneur", DISTINCTE.as_bytes()),
+    ] {
+        assert!(
+            !contient(&conteneur, aiguille),
+            "{quoi} apparaît en clair dans le conteneur"
+        );
+    }
+}
+
+/// Le vault **reconstitué** ne fuit pas davantage que celui dont il provient :
+/// l'aller-retour n'introduit aucun fichier en clair à destination.
+#[test]
+fn aucun_contenu_ne_transparait_dans_le_vault_reconstitue() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let coffre = session_representative(atelier.path());
+
+    let mut conteneur = Vec::new();
+    vault_core::Vault::export(&coffre, vault_core::ExportEnvelope::Source, &mut conteneur)
+        .expect("exportable");
+
+    let restaure = atelier.path().join("restaure");
+    vault_core::Vault::import(
+        &mut &conteneur[..],
+        &restaure,
+        vault_core::ImportPolicy::Refuse,
+    )
+    .expect("importable");
+
+    for (nom, octets) in contenu_du_vault(&restaure) {
+        assert!(
+            !contient(&octets, CONTENU_SECRET),
+            "contenu en clair dans {nom}"
+        );
+        assert!(
+            !contient(&octets, NOM_SECRET.as_bytes()),
+            "nom de fichier en clair dans {nom}"
+        );
+        assert!(
+            !nom.contains(NOM_SECRET) && !nom.contains(DOSSIER_SECRET),
+            "nom révélateur : {nom}"
+        );
+    }
+}

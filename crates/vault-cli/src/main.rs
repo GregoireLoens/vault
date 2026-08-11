@@ -117,11 +117,34 @@ enum Commande {
         #[arg(long = "to", value_name = "CHEMIN")]
         destination: PathBuf,
     },
+    /// Produit un conteneur portable depuis le vault.
+    Export {
+        /// Fichier de sortie. `-` désigne la sortie standard.
+        #[arg(long = "to", value_name = "CHEMIN")]
+        destination: PathBuf,
+        /// Protège le conteneur par une passphrase distincte.
+        #[arg(long)]
+        new_passphrase: bool,
+    },
+    /// Reconstitue un vault depuis un conteneur.
+    Import {
+        /// Conteneur à lire. `-` désigne l'entrée standard.
+        source: PathBuf,
+        /// Répertoire du vault à créer.
+        #[arg(long = "to", value_name = "CHEMIN")]
+        destination: PathBuf,
+        /// Remplace un vault existant à cette destination.
+        #[arg(long)]
+        replace: bool,
+        /// Contrôle en outre tous les tags AEAD. Demande la passphrase.
+        #[arg(long)]
+        verify_content: bool,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
-    let mut console = Terminal::new(std::io::stdout(), cli.quiet);
+    let mut console = Terminal::new(std::io::stdout(), std::io::stderr(), cli.quiet);
     let code = match executer(&cli, &mut console) {
         Ok(()) => 0,
         Err(erreur) => {
@@ -204,7 +227,50 @@ fn executer(cli: &Cli, console: &mut dyn Console) -> CliResult<()> {
                 destination: destination.clone(),
             },
         ),
+        Commande::Export {
+            destination,
+            new_passphrase,
+        } => exporter(&mut contexte, destination.clone(), *new_passphrase),
+        Commande::Import {
+            source,
+            destination,
+            replace,
+            verify_content,
+        } => importer(
+            &mut contexte,
+            &cmd::import::Options {
+                source: source.clone(),
+                destination: destination.clone(),
+                replace: *replace,
+                verify_content: *verify_content,
+            },
+        ),
     }
+}
+
+/// Branche `vault export` sur la sortie standard du processus.
+///
+/// Le conteneur y sort **seul** (XFR-006). La détection de terminal vit dans
+/// `console::tty`, seul fichier exclu de la couverture ; la **décision** qui en
+/// découle est dans la commande, donc mesurée (XFR-005).
+fn exporter(contexte: &mut Contexte, destination: PathBuf, new_passphrase: bool) -> CliResult<()> {
+    let mut sortie = std::io::stdout().lock();
+    cmd::export::executer(
+        contexte,
+        &cmd::export::Options {
+            destination,
+            new_passphrase,
+        },
+        &mut sortie,
+        crate::console::tty::stdout_is_terminal(),
+    )
+}
+
+/// Branche `vault import` sur l'entrée standard du processus, d'où le conteneur
+/// peut venir (FR-036).
+fn importer(contexte: &mut Contexte, options: &cmd::import::Options) -> CliResult<()> {
+    let mut entree = std::io::stdin().lock();
+    cmd::import::executer(contexte, options, &mut entree)
 }
 
 /// Traduit `--on-conflict` en politique de la bibliothèque.
@@ -454,5 +520,106 @@ mod tests {
                 .contains("0 dossier(s), 0 fichier(s)")
         );
         assert!(sortie.join("note.txt").is_file());
+    }
+
+    /// Les deux commandes de la feature 003, prises par le même chemin que le
+    /// binaire : `Cli` → `executer` → `cmd::export` / `cmd::import`.
+    ///
+    /// Elles vivent ici, et non dans `tests/cli.rs`, parce que le binaire écrit
+    /// alors sur la **vraie** sortie standard : un test de processus ne pourrait
+    /// pas distinguer un conteneur d'un message. Ce chemin-ci traverse pourtant
+    /// le même `executer`, donc la même construction d'options et le même
+    /// verrouillage de flux.
+    #[test]
+    fn l_export_et_l_import_s_enchainent() {
+        let atelier = tempfile::tempdir().expect("répertoire temporaire");
+        let coffre = atelier.path().join("coffre");
+        let source = atelier.path().join("note.txt");
+        std::fs::write(&source, b"contenu").expect("écrivable");
+        let conteneur = atelier.path().join("sauvegarde.vaultx");
+        let restaure = atelier.path().join("restaure");
+
+        let creation = analyser(&[
+            "create",
+            coffre.to_str().expect("UTF-8"),
+            "--kdf-memory",
+            "64",
+            "--kdf-iterations",
+            "1",
+            "--kdf-parallelism",
+            "1",
+        ]);
+        let mut console = FakeConsole::new(&[PASSPHRASE, PASSPHRASE], &["OUI"]);
+        executer(&creation, &mut console).expect("créable");
+
+        let ajout = analyser(&[
+            "add",
+            source.to_str().expect("UTF-8"),
+            "--copy",
+            "--vault",
+            coffre.to_str().expect("UTF-8"),
+        ]);
+        let mut console = FakeConsole::new(&[PASSPHRASE], &[]);
+        executer(&ajout, &mut console).expect("ajoutable");
+
+        // XFR-001, XFR-002 : aucune saisie, et l'avertissement quand même.
+        let export = analyser(&[
+            "export",
+            "--to",
+            conteneur.to_str().expect("UTF-8"),
+            "--vault",
+            coffre.to_str().expect("UTF-8"),
+        ]);
+        let mut console = FakeConsole::non_interactive();
+        executer(&export, &mut console).expect("exportable");
+        assert!(console.invites.is_empty(), "{:?}", console.invites);
+        assert!(console.tout_affiche().contains("clé maîtresse"));
+        assert!(conteneur.is_file());
+
+        // XFR-010 : aucune saisie non plus à l'import.
+        let import = analyser(&[
+            "import",
+            conteneur.to_str().expect("UTF-8"),
+            "--to",
+            restaure.to_str().expect("UTF-8"),
+        ]);
+        let mut console = FakeConsole::non_interactive();
+        executer(&import, &mut console).expect("importable");
+        assert!(console.tout_affiche().contains("sceau vérifié"));
+
+        // Le vault restitué s'ouvre avec la passphrase du vault source, et son
+        // contenu est celui qu'on y avait déposé.
+        let listage = analyser(&["ls", "--vault", restaure.to_str().expect("UTF-8")]);
+        let mut console = FakeConsole::new(&[PASSPHRASE], &[]);
+        executer(&listage, &mut console).expect("listable");
+        assert!(console.tout_affiche().contains("note.txt"));
+
+        // XFR-012 : réimporter par-dessus rend 8 ; avec --replace, l'ancien est
+        // déplacé et son emplacement annoncé.
+        let mut console = FakeConsole::non_interactive();
+        assert_eq!(
+            executer(&import, &mut console)
+                .expect_err("refus attendu")
+                .code(),
+            8
+        );
+
+        let remplacement = analyser(&[
+            "import",
+            conteneur.to_str().expect("UTF-8"),
+            "--to",
+            restaure.to_str().expect("UTF-8"),
+            "--replace",
+        ]);
+        let mut console = FakeConsole::non_interactive();
+        executer(&remplacement, &mut console).expect("remplaçable");
+        assert!(
+            console
+                .avertissements
+                .iter()
+                .any(|texte| texte.contains(".vault-remplace-")),
+            "{:?}",
+            console.avertissements
+        );
     }
 }

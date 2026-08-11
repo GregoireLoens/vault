@@ -82,7 +82,7 @@ fn temporary_in(directory: &Path) -> Result<tempfile::NamedTempFile> {
 /// `Path::parent` rend `Some("")` pour un chemin sans répertoire, et non
 /// `None` : sans cette normalisation, le temporaire serait créé dans un
 /// répertoire au nom vide, que le système refuse.
-fn parent_of(path: &Path) -> &Path {
+pub(crate) fn parent_of(path: &Path) -> &Path {
     match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
@@ -120,7 +120,7 @@ fn replace(from: &Path, to: &Path) -> Result<()> {
 /// Synchronise un répertoire, pour que l'entrée renommée survive à une
 /// coupure.
 #[cfg(unix)]
-fn sync_dir(directory: &Path) -> Result<()> {
+pub(crate) fn sync_dir(directory: &Path) -> Result<()> {
     std::fs::File::open(directory)?.sync_all()?;
     Ok(())
 }
@@ -129,7 +129,7 @@ fn sync_dir(directory: &Path) -> Result<()> {
 // durabilité de l'entrée de répertoire y relève du système de fichiers.
 // Absent de la compilation Linux, donc sans effet sur la couverture.
 #[cfg(windows)]
-fn sync_dir(_directory: &Path) -> Result<()> {
+pub(crate) fn sync_dir(_directory: &Path) -> Result<()> {
     Ok(())
 }
 

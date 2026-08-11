@@ -172,3 +172,119 @@ fn les_chemins_du_corpus_suivent_les_regles() {
     let hostile = VaultPath::from_components([vec![0xff, 0xfe, b'x']]).expect("accepté");
     assert_eq!(hostile.file_name(), Some(&[0xff, 0xfe, b'x'][..]));
 }
+
+// ---------------------------------------------------------------------------
+// Le conteneur d'export — T013, cinquième surface de décodage
+// ---------------------------------------------------------------------------
+//
+// Le conteneur rejoint le corpus au même titre que l'en-tête, l'index, les
+// chemins et les blobs. Les entrées ci-dessous sont celles que le développement
+// de la feature 003 a réellement rencontrées, et chacune **doit** produire un
+// refus explicite, sans panique, sans boucle et sans allocation démesurée.
+//
+// L'entrée la plus instructive est la dernière : un cadre annonçant 2⁶³ octets.
+// Elle est la raison d'être des bornes de `docs/conteneur.md` §4 — sans elles,
+// la lire ferait réserver huit exaoctets à celui qui la lit, et ce test ne
+// finirait jamais.
+
+/// Conteneurs hostiles, chacun décrit par ce qu'il éprouve.
+///
+/// Bâtis à la main, depuis les seules constantes publiques : c'est ce qu'un
+/// adversaire ferait, et le corpus doit donc en faire autant.
+fn conteneurs_du_corpus() -> Vec<(&'static str, Vec<u8>)> {
+    use ciborium::Value;
+
+    fn encoder(valeur: &Value) -> Vec<u8> {
+        let mut octets = Vec::new();
+        ciborium::into_writer(valeur, &mut octets).expect("encodable");
+        octets
+    }
+
+    fn en_tete(magic: &[u8], version: u64, membres: u64) -> Vec<u8> {
+        encoder(&Value::Map(vec![
+            (Value::Text("magic".into()), Value::Bytes(magic.to_vec())),
+            (
+                Value::Text("container_version".into()),
+                Value::Integer(version.into()),
+            ),
+            (
+                Value::Text("vault_format_version".into()),
+                Value::Integer(1.into()),
+            ),
+            (
+                Value::Text("member_count".into()),
+                Value::Integer(membres.into()),
+            ),
+            (
+                Value::Text("payload_bytes".into()),
+                Value::Integer(0.into()),
+            ),
+        ]))
+    }
+
+    fn cadre(kind: &str, id: Option<Vec<u8>>, length: u64) -> Vec<u8> {
+        encoder(&Value::Map(vec![
+            (Value::Text("kind".into()), Value::Text(kind.into())),
+            (
+                Value::Text("id".into()),
+                id.map_or(Value::Null, Value::Bytes),
+            ),
+            (Value::Text("length".into()), Value::Integer(length.into())),
+        ]))
+    }
+
+    let magie = vault_core::CONTAINER_MAGIC.to_vec();
+    let mut corpus = vec![
+        ("flux vide", Vec::new()),
+        ("texte quelconque", b"ceci n'est pas un conteneur".to_vec()),
+        ("magie d'un vault sur disque", en_tete(b"VAULTFMT", 1, 2)),
+        ("version de conteneur future", en_tete(&magie, 2, 2)),
+        ("aucun membre annonce", en_tete(&magie, 1, 0)),
+        ("en-tete seul, sans sceau", en_tete(&magie, 1, 2)),
+    ];
+
+    // Un cadre dont la longueur annoncée déborde toute mémoire concevable.
+    let mut demesure = en_tete(&magie, 1, 2);
+    demesure.extend_from_slice(&cadre("header", None, 1 << 63));
+    corpus.push((
+        "longueur annoncee a deux puissance soixante-trois",
+        demesure,
+    ));
+
+    // Un cadre dont la longueur annoncée est la valeur maximale d'un entier.
+    let mut maximale = en_tete(&magie, 1, 2);
+    maximale.extend_from_slice(&cadre("index", None, u64::MAX));
+    corpus.push(("longueur annoncee a u64::MAX", maximale));
+
+    // Un membre `blob` là où le `header` est attendu.
+    let mut desordre = en_tete(&magie, 1, 2);
+    desordre.extend_from_slice(&cadre("blob", Some(vec![0u8; 32]), 0));
+    corpus.push(("blob en premiere position", desordre));
+
+    // Un type de membre que le format ne connaît pas.
+    let mut inconnu = en_tete(&magie, 1, 2);
+    inconnu.extend_from_slice(&cadre("manifeste", None, 0));
+    corpus.push(("type de membre inconnu", inconnu));
+
+    // Un identifiant de blob de longueur fausse.
+    let mut court = en_tete(&magie, 1, 3);
+    court.extend_from_slice(&cadre("header", None, 0));
+    court.extend_from_slice(&cadre("index", None, 0));
+    court.extend_from_slice(&cadre("blob", Some(vec![0u8; 4]), 0));
+    corpus.push(("identifiant de blob trop court", court));
+
+    corpus
+}
+
+/// Chaque conteneur du corpus est refusé, et **rien n'apparaît à destination**.
+#[test]
+fn les_conteneurs_du_corpus_sont_refuses() {
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+
+    for (index, (quoi, octets)) in conteneurs_du_corpus().into_iter().enumerate() {
+        let cible = atelier.path().join(format!("cible-{index}"));
+        let resultat = Vault::import(&mut &octets[..], &cible, vault_core::ImportPolicy::Refuse);
+        assert!(resultat.is_err(), "accepté : {quoi}");
+        assert!(!cible.exists(), "un vault est apparu pour : {quoi}");
+    }
+}

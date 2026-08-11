@@ -195,10 +195,12 @@ mod tests {
     /// Un chemin relatif sans parent explicite vise le répertoire courant.
     #[test]
     fn un_chemin_relatif_est_accepte() {
+        // `set_current_dir` est global au processus : ce test et son jumeau de
+        // `ops::import` prennent le même verrou, et rétablissent l'état avant
+        // de rendre la main (voir `ops::serie`).
+        let _serie = crate::ops::serie::repertoire_courant();
         let atelier = tempfile::tempdir().expect("répertoire temporaire");
         let ancien = std::env::current_dir().expect("répertoire courant");
-        // `set_current_dir` est global au processus : ce test doit rester le
-        // seul à en dépendre, et rétablir l'état avant de rendre la main.
         std::env::set_current_dir(atelier.path()).expect("déplaçable");
 
         let resultat = Vault::create(Path::new("coffre-relatif"), passphrase(), params());

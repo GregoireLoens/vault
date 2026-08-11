@@ -50,17 +50,27 @@ pub trait Console {
 }
 
 /// Console branchée sur le terminal.
-pub struct Terminal<W: Write> {
+///
+/// **Deux canaux, et la distinction est normative** (FR-037, XFR-006) : la
+/// sortie standard ne porte que ce qu'une machine doit lire — le rendu `--json`,
+/// un listage, et surtout le **conteneur d'export**, qui doit y sortir seul.
+/// Progression, invites, avertissements et erreurs passent tous par l'erreur
+/// standard. Sans cette séparation, `vault export --to - | vault import -`
+/// produirait un conteneur corrompu par la première ligne de progression.
+pub struct Terminal<W: Write, E: Write> {
     sortie: W,
+    erreur: E,
     interactive: bool,
     quiet: bool,
 }
 
-impl<W: Write> Terminal<W> {
-    /// Construit une console sur cette sortie.
-    pub fn new(sortie: W, quiet: bool) -> Self {
+impl<W: Write, E: Write> Terminal<W, E> {
+    /// Construit une console sur cette sortie standard et cette erreur
+    /// standard.
+    pub fn new(sortie: W, erreur: E, quiet: bool) -> Self {
         Self {
             sortie,
+            erreur,
             interactive: tty::stdin_is_terminal(),
             quiet,
         }
@@ -69,17 +79,19 @@ impl<W: Write> Terminal<W> {
     fn ecrire(&mut self, texte: &str) {
         // Une sortie qui ne peut plus être écrite — tube fermé — ne doit pas
         // faire échouer une opération déjà engagée sur le vault.
-        drop(writeln!(self.sortie, "{texte}"));
+        drop(writeln!(self.erreur, "{texte}"));
     }
 }
 
-impl<W: Write> Console for Terminal<W> {
+impl<W: Write, E: Write> Console for Terminal<W, E> {
     fn read_passphrase(&mut self, invite: &str) -> CliResult<SecretString> {
-        tty::read_passphrase(&mut self.sortie, self.interactive, invite)
+        // L'invite va sur l'erreur standard, comme tout le reste du dialogue :
+        // la sortie standard peut porter un conteneur.
+        tty::read_passphrase(&mut self.erreur, self.interactive, invite)
     }
 
     fn read_line(&mut self, invite: &str) -> CliResult<String> {
-        tty::read_line(&mut self.sortie, self.interactive, invite)
+        tty::read_line(&mut self.erreur, self.interactive, invite)
     }
 
     fn info(&mut self, texte: &str) {
@@ -93,7 +105,7 @@ impl<W: Write> Console for Terminal<W> {
     }
 
     fn output(&mut self, texte: &str) {
-        self.ecrire(texte);
+        drop(writeln!(self.sortie, "{texte}"));
     }
 }
 
@@ -185,30 +197,38 @@ mod tests {
     #[test]
     fn le_mode_silencieux_ne_masque_pas_les_avertissements() {
         let mut sortie = Vec::new();
+        let mut erreur = Vec::new();
         {
-            let mut console = Terminal::new(&mut sortie, true);
+            let mut console = Terminal::new(&mut sortie, &mut erreur, true);
             console.info("progression");
             console.warn("avertissement");
             console.output("resultat");
         }
-        let texte = String::from_utf8(sortie).expect("UTF-8");
-        assert!(!texte.contains("progression"));
-        assert!(texte.contains("avertissement"));
-        assert!(texte.contains("resultat"));
+        let dialogue = String::from_utf8(erreur).expect("UTF-8");
+        assert!(!dialogue.contains("progression"));
+        assert!(dialogue.contains("avertissement"));
+
+        assert_eq!(String::from_utf8(sortie).expect("UTF-8"), "resultat\n");
     }
 
+    /// FR-037, XFR-006 : **rien** de ce qui n'est pas destiné à une machine ne
+    /// doit atteindre la sortie standard. C'est ce qui permet à un conteneur
+    /// d'y sortir seul.
     #[test]
-    fn le_mode_bavard_affiche_tout() {
+    fn la_sortie_standard_ne_porte_que_le_resultat() {
         let mut sortie = Vec::new();
+        let mut erreur = Vec::new();
         {
-            let mut console = Terminal::new(&mut sortie, false);
+            let mut console = Terminal::new(&mut sortie, &mut erreur, false);
             console.info("progression");
+            console.warn("avertissement");
+            drop(console.read_line("invite : "));
         }
-        assert!(
-            String::from_utf8(sortie)
-                .expect("UTF-8")
-                .contains("progression")
-        );
+        assert!(sortie.is_empty(), "{sortie:?}");
+
+        let dialogue = String::from_utf8(erreur).expect("UTF-8");
+        assert!(dialogue.contains("progression"));
+        assert!(dialogue.contains("avertissement"));
     }
 
     /// CLI-001, CLI-022 : sans terminal, la saisie échoue au lieu de lire un
@@ -216,7 +236,8 @@ mod tests {
     #[test]
     fn sans_terminal_toute_saisie_echoue() {
         let mut sortie = Vec::new();
-        let mut console = Terminal::new(&mut sortie, false);
+        let mut erreur = Vec::new();
+        let mut console = Terminal::new(&mut sortie, &mut erreur, false);
 
         assert!(matches!(
             console.read_passphrase("Passphrase : "),
@@ -243,7 +264,7 @@ mod tests {
 
         assert!(Write::flush(&mut Cassee).is_err());
 
-        let mut console = Terminal::new(Cassee, false);
+        let mut console = Terminal::new(Cassee, Cassee, false);
         console.info("perdu");
         console.warn("perdu");
         console.output("perdu");
