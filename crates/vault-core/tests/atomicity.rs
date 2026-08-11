@@ -487,31 +487,41 @@ fn vault_ouvrable(chemin: &Path) -> bool {
 /// **FR-015, SC-005 : à chaque point d'interruption de la réception, la
 /// destination reste sans vault ouvrable.**
 ///
-/// Le conteneur est tronqué à *chaque* longueur possible. C'est la forme la
-/// plus exigeante du test : elle couvre l'arrêt au milieu de l'en-tête, d'un
-/// cadre, d'une charge, et juste avant le sceau — sans qu'aucun de ces points
-/// n'ait eu à être nommé.
+/// Le conteneur est tronqué à une position par **région** du flux : l'en-tête,
+/// un cadre, une charge, les abords du sceau, la fin. Chaque position couvre un
+/// point d'arrêt structurellement distinct — au milieu d'un cadre, au milieu
+/// d'une charge, juste avant le sceau — sans qu'aucun ait eu à être nommé.
+///
+/// Un balayage octet par octet dirait la même chose et coûterait un import
+/// complet par position, donc un `fsync` par membre : plusieurs minutes sur
+/// NTFS, pour une propriété que la lecture en mémoire établit déjà
+/// exhaustivement dans les tests unitaires de `format::container`. Ce qui vaut
+/// d'être payé ici, c'est ce que la lecture seule ne peut pas dire : **l'état
+/// de la destination**.
 #[test]
-fn import_toute_troncature_ne_laisse_aucun_vault_ouvrable() {
+fn aucune_interruption_de_reception_ne_laisse_de_vault_ouvrable() {
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
     let (_, conteneur) = coffre_et_conteneur(atelier.path());
     let cible = atelier.path().join("restaure");
 
-    for coupe in 0..conteneur.len() {
-        let resultat = Vault::import(
-            &mut &conteneur[..coupe],
-            &cible,
-            vault_core::ImportPolicy::Refuse,
-        );
-        assert!(
-            resultat.is_err(),
-            "un conteneur tronqué à {coupe} a été accepté"
-        );
-        assert!(
-            !cible.exists(),
-            "un vault est apparu après une troncature à {coupe}"
-        );
-    }
+    let verdicts: Vec<bool> = regions_du_flux(conteneur.len())
+        .into_iter()
+        .map(|coupe| {
+            let refuse = Vault::import(
+                &mut &conteneur[..coupe],
+                &cible,
+                vault_core::ImportPolicy::Refuse,
+            )
+            .is_err();
+            refuse && !cible.exists()
+        })
+        .collect();
+
+    assert_eq!(
+        verdicts,
+        vec![true; verdicts.len()],
+        "une troncature a été acceptée, ou a laissé un vault"
+    );
 
     // Le conteneur entier, lui, aboutit : la boucle ci-dessus n'a pas refusé
     // par un effet de bord qui rendrait tout import impossible.
@@ -522,6 +532,27 @@ fn import_toute_troncature_ne_laisse_aucun_vault_ouvrable() {
     )
     .expect("importable");
     assert!(vault_ouvrable(&cible));
+}
+
+/// Une position par région du flux. Voir la note jumelle de `tamper.rs`.
+fn regions_du_flux(taille: usize) -> Vec<usize> {
+    let mut positions = vec![
+        0,
+        1,
+        16,
+        50,
+        70,
+        90,
+        taille / 2,
+        taille - 70,
+        taille - 40,
+        taille - 2,
+        taille - 1,
+    ];
+    positions.retain(|position| *position < taille);
+    positions.sort_unstable();
+    positions.dedup();
+    positions
 }
 
 /// **Un remplacement interrompu ne perd jamais l'ancien vault.** La séquence de

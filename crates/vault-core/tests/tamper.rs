@@ -400,59 +400,96 @@ fn coffre_et_conteneur(atelier: &Path) -> (PathBuf, Vec<u8>) {
     (coffre, conteneur)
 }
 
-/// **Aucun** octet du conteneur ne peut être retourné sans que l'import le
-/// voie, et aucun refus ne laisse de vault à destination.
+/// **Un conteneur altéré ne donne jamais de vault**, et un conteneur tronqué
+/// non plus.
 ///
-/// Le balayage est exhaustif : chaque position du flux, un bit à la fois.
+/// Le balayage porte sur les **régions** du flux — en-tête, cadre, charge,
+/// sceau — et non sur chaque octet. L'exhaustivité, elle, vit dans les tests
+/// unitaires de `format::container`, où la lecture se fait en mémoire : chaque
+/// position y coûte quelques microsecondes, contre un import complet ici, donc
+/// un `fsync` par membre. Sur NTFS ce `fsync` se paie en dizaines de
+/// millisecondes, et un balayage exhaustif y prenait plusieurs minutes — pour
+/// répéter à grands frais ce qui est déjà établi ailleurs.
+///
+/// Ce qui reste ici est ce que la lecture en mémoire ne peut pas établir : que
+/// le refus **ne laisse rien** à destination.
 #[test]
 fn aucune_alteration_du_conteneur_ne_passe() {
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
     let (_, conteneur) = coffre_et_conteneur(atelier.path());
+    let cible = atelier.path().join("cible");
 
-    let mut passees = Vec::new();
-    for position in 0..conteneur.len() {
-        let mut altere = conteneur.clone();
-        altere[position] ^= 0x01;
+    let verdicts: Vec<bool> = regions_du_flux(conteneur.len())
+        .into_iter()
+        .map(|position| {
+            let mut altere = conteneur.clone();
+            altere[position] ^= 0x01;
+            let refuse =
+                Vault::import(&mut &altere[..], &cible, vault_core::ImportPolicy::Refuse).is_err();
+            let rien = !cible.exists();
+            drop(std::fs::remove_dir_all(&cible));
+            refuse && rien
+        })
+        .collect();
 
-        let cible = atelier.path().join("cible");
-        let resultat = Vault::import(&mut &altere[..], &cible, vault_core::ImportPolicy::Refuse);
-
-        if resultat.is_ok() {
-            passees.push(position);
-        }
-        assert!(
-            !cible.exists() || resultat.is_ok(),
-            "un refus a laissé un vault, position {position}"
-        );
-        drop(std::fs::remove_dir_all(&cible));
-    }
-
-    assert!(
-        passees.is_empty(),
-        "altérations non détectées aux positions {passees:?}"
+    assert_eq!(
+        verdicts,
+        vec![true; verdicts.len()],
+        "une altération a été acceptée, ou a laissé quelque chose"
     );
 }
 
-/// La troncature suit la même règle : **aucune** longueur inférieure à celle du
-/// conteneur ne produit un vault.
+/// La troncature suit la même règle, sur les mêmes régions.
 #[test]
 fn aucune_troncature_du_conteneur_ne_passe() {
     let atelier = tempfile::tempdir().expect("répertoire temporaire");
     let (_, conteneur) = coffre_et_conteneur(atelier.path());
+    let cible = atelier.path().join("cible");
 
-    for coupe in 0..conteneur.len() {
-        let cible = atelier.path().join("cible");
-        assert!(
-            Vault::import(
+    let verdicts: Vec<bool> = regions_du_flux(conteneur.len())
+        .into_iter()
+        .map(|coupe| {
+            let refuse = Vault::import(
                 &mut &conteneur[..coupe],
                 &cible,
-                vault_core::ImportPolicy::Refuse
+                vault_core::ImportPolicy::Refuse,
             )
-            .is_err(),
-            "conteneur tronqué à {coupe} accepté"
-        );
-        assert!(!cible.exists(), "un vault est apparu, coupé à {coupe}");
-    }
+            .is_err();
+            refuse && !cible.exists()
+        })
+        .collect();
+
+    assert_eq!(
+        verdicts,
+        vec![true; verdicts.len()],
+        "une troncature a été acceptée, ou a laissé quelque chose"
+    );
+}
+
+/// Une position par **région** d'un conteneur : le tout début, l'en-tête, le
+/// premier cadre, une charge, le milieu, les abords du sceau, et la fin.
+///
+/// Les valeurs viennent de la disposition de `docs/conteneur.md` : l'en-tête
+/// tient dans la soixantaine d'octets, le premier cadre dans la vingtaine qui
+/// suit, et le sceau occupe les soixante-neuf derniers.
+fn regions_du_flux(taille: usize) -> Vec<usize> {
+    let mut positions = vec![
+        0,
+        1,
+        16,
+        50,
+        70,
+        90,
+        taille / 2,
+        taille - 70,
+        taille - 40,
+        taille - 2,
+        taille - 1,
+    ];
+    positions.retain(|position| *position < taille);
+    positions.sort_unstable();
+    positions.dedup();
+    positions
 }
 
 /// **Ce que le sceau ne détecte pas**, et il faut que ce soit écrit ici plutôt

@@ -928,6 +928,42 @@ mod tests {
         assert!(relire(&refait).is_ok());
     }
 
+    /// **Aucun octet du conteneur ne peut être retourné sans que la lecture le
+    /// voie, et aucune troncature ne passe.**
+    ///
+    /// Le balayage est exhaustif parce qu'il est **gratuit ici** : la lecture
+    /// se fait en mémoire, sans toucher au disque. La même propriété, éprouvée
+    /// à travers un import réel, coûterait un `fsync` par membre et par
+    /// position — quelques millisecondes sur ext4, plusieurs dizaines sur
+    /// NTFS. `tests/tamper.rs` s'y borne donc à un échantillon structurel, et
+    /// c'est ici que l'exhaustivité vit.
+    #[test]
+    fn aucune_alteration_ni_troncature_ne_passe_a_la_lecture() {
+        let temoin = temoin();
+
+        let alterations: Vec<bool> = (0..temoin.len())
+            .map(|position| {
+                let mut altere = temoin.clone();
+                altere[position] ^= 0x01;
+                relire(&altere).is_err()
+            })
+            .collect();
+        assert_eq!(
+            alterations,
+            vec![true; temoin.len()],
+            "un octet retourné est passé inaperçu"
+        );
+
+        let troncatures: Vec<bool> = (0..temoin.len())
+            .map(|coupe| relire(&temoin[..coupe]).is_err())
+            .collect();
+        assert_eq!(
+            troncatures,
+            vec![true; temoin.len()],
+            "une troncature est passée inaperçue"
+        );
+    }
+
     #[test]
     fn des_octets_apres_le_sceau_sont_refuses() {
         let mut octets = temoin();
