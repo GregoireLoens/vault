@@ -16,3 +16,20 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
+
+# Les dépendances sont compilées optimisées, y compris en profil de
+# développement.
+#
+# Elles ne sont jamais l'objet du débogage — aucun point d'arrêt n'y est posé,
+# aucune trace n'en vient — et ce sont elles qui portent les primitives
+# coûteuses : Argon2id, XChaCha20-Poly1305, BLAKE3. Non optimisées, BLAKE3
+# devient assez lent pour que SC-002 — « un export ne coûte pas plus de 20 % de
+# plus qu'une copie » — bascule au gré de la charge de la machine, alors que le
+# critère porte sur ce qu'un utilisateur observe, et un utilisateur exécute du
+# code optimisé.
+#
+# `vault-core` et `vault-cli`, eux, restent non optimisés : les traces de
+# panique y gardent leur précision, et l'instrumentation de couverture y mesure
+# ce qu'elle a toujours mesuré.
+[profile.dev.package."*"]
+opt-level = 2

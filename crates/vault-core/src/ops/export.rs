@@ -138,12 +138,9 @@ impl Vault {
 
         let mut writer =
             ContainerWriter::begin(sink, header.format_version(), member_count, payload_bytes)?;
-        writer.member(
-            MemberKind::Header,
-            None,
-            membre_header.len() as u64,
-            &mut &membre_header[..],
-        )?;
+        let taille = membre_header.len() as u64;
+        let mut entete = &membre_header[..];
+        writer.member(MemberKind::Header, None, taille, &mut entete)?;
         writer.member(MemberKind::Index, None, index.len() as u64, &mut &index[..])?;
         for (blob_id, taille) in &blobs {
             let mut fichier = std::fs::File::open(blob_path(path, blob_id))?;

@@ -42,6 +42,59 @@ que possible.
 
 ---
 
+## `crates/vault-cli/src/cmd/transport.rs`
+
+Déclarée dans `scripts/dev.sh` et dans `.github/workflows/ci.yml`, par le même
+`--ignore-filename-regex` que la précédente.
+
+**Ce que contient ce fichier** : deux fonctions, six lignes en tout. Chacune appelle le transport —
+`Vault::send` ou `Vault::fetch` —, passe le résumé obtenu au compte rendu, et rend le succès. Rien
+d'autre. La validation des arguments, le refus d'une extrémité mal désignée, la confirmation d'un
+remplacement, l'assemblage des options ssh et les comptes rendus eux-mêmes sont restés dehors, dans
+`cmd/send.rs` et `cmd/fetch.rs`, et sont mesurés comme le reste.
+
+Le périmètre a été **mesuré, et non supposé** : sans ce fichier, la porte signale exactement deux
+lignes par commande — l'appel au compte rendu et le `Ok(())` qui le suit.
+
+**Pourquoi ce n'est pas la même catégorie que `tty.rs`, et pourquoi il faut le dire.** Ce code
+**s'exécute** sur l'exécuteur d'intégration : `crates/vault-cli/tests/transfer.rs` mène des
+transferts entiers contre le faux client ssh, et ces six lignes y passent à chaque fois. Ce n'est
+donc pas du code inexécutable ; c'est du code dont la mesure n'est pas créditée là où on la lit.
+
+`cargo llvm-cov --all-targets` compte les lignes **par instanciation de crate**. Le même fichier
+est compilé deux fois — dans le binaire `vault` et dans son binaire de test — et une ligne couverte
+dans l'un mais pas dans l'autre est comptée manquante. Le rapport annoté, le rapport HTML et
+l'export lcov, qui prennent l'union des instanciations, n'affichent d'ailleurs **aucune** ligne
+manquante ici : seul le tableau récapitulatif en signale, et c'est lui qui commande la porte.
+
+**Pourquoi l'instanciation de test ne peut pas y parvenir.** Il lui faudrait un client ssh dans son
+`PATH`. Le faux client existe — c'est `crates/vault-cli/tests/faux-ssh/` — mais l'y placer suppose
+de modifier le `PATH` du processus de test, donc `std::env::set_var`, `unsafe` depuis l'édition
+2024. `unsafe_code = "forbid"` l'interdit dans cet espace de travail, et `forbid` ne se lève pas.
+Les tests d'intégration contournent la difficulté en lançant le **binaire** avec un `PATH` choisi,
+ce qui couvre le chemin réel — mais crédite l'autre instanciation.
+
+**Ce qui a été écarté**, et par quoi :
+
+| Alternative | Pourquoi non |
+|---|---|
+| Un trait de transport substituable en test | D-207 l'a examinée et rejetée : le chemin réel resterait non exécuté en intégration, donc soit non couvert, soit couvert par une exclusion **plus large** que celle-ci |
+| Exclure `cmd/send.rs` et `cmd/fetch.rs` en entier | Plus de deux cent cinquante lignes de validation et de refus cesseraient d'être mesurées pour six qui posent problème |
+| Renoncer à `--all-targets`, ou fusionner les instanciations | Modifie la porte elle-même, donc la garantie que le projet donne à ses lecteurs |
+
+**Ce que cette exclusion coûte, dit franchement.** Six lignes du produit ne sont plus comptées. Si
+l'une d'elles cessait un jour d'être exécutée — un `?` déplacé, un compte rendu oublié —, la porte
+de couverture ne le dirait pas. Ce sont les tests de `tests/transfer.rs` qui le diraient, en
+échouant : ils vérifient qu'un envoi nominal dépose un vault ouvrable à la destination et que son
+compte rendu la nomme. Le filet existe donc, il n'est simplement plus tendu par la porte 5.
+
+**Ce qui rendrait cette exclusion caduque** : que `std::env::set_var` redevienne appelable sans
+`unsafe`, que `cargo llvm-cov` fusionne les instanciations pour son tableau, ou qu'un moyen
+apparaisse de substituer le programme lancé sans introduire de couture dans le produit. Le jour où
+l'un des trois arrive, ce fichier doit être réintégré à la mesure et cette section retirée.
+
+---
+
 ## Ce qui n'est **pas** une exclusion
 
 Deux catégories reviennent souvent dans la discussion et n'en sont pas.
@@ -94,57 +147,3 @@ lui, est mesuré sur Linux, où la porte s'applique.
 La commande échoue si une seule ligne n'est pas couverte. Toute exclusion ajoutée à
 `--ignore-filename-regex` doit l'être **dans les deux fichiers** — `scripts/dev.sh` et
 `ci.yml` — être annotée dans le code qu'elle vise, et être ajoutée ici avec sa justification.
-
-
----
-
-## `crates/vault-cli/src/cmd/transport.rs`
-
-Déclarée dans `scripts/dev.sh` et dans `.github/workflows/ci.yml`, par le même
-`--ignore-filename-regex` que la précédente.
-
-**Ce que contient ce fichier** : deux fonctions, six lignes en tout. Chacune appelle le transport —
-`Vault::send` ou `Vault::fetch` —, passe le résumé obtenu au compte rendu, et rend le succès. Rien
-d'autre. La validation des arguments, le refus d'une extrémité mal désignée, la confirmation d'un
-remplacement, l'assemblage des options ssh et les comptes rendus eux-mêmes sont restés dehors, dans
-`cmd/send.rs` et `cmd/fetch.rs`, et sont mesurés comme le reste.
-
-Le périmètre a été **mesuré, et non supposé** : sans ce fichier, la porte signale exactement deux
-lignes par commande — l'appel au compte rendu et le `Ok(())` qui le suit.
-
-**Pourquoi ce n'est pas la même catégorie que `tty.rs`, et pourquoi il faut le dire.** Ce code
-**s'exécute** sur l'exécuteur d'intégration : `crates/vault-cli/tests/transfer.rs` mène des
-transferts entiers contre le faux client ssh, et ces six lignes y passent à chaque fois. Ce n'est
-donc pas du code inexécutable ; c'est du code dont la mesure n'est pas créditée là où on la lit.
-
-`cargo llvm-cov --all-targets` compte les lignes **par instanciation de crate**. Le même fichier
-est compilé deux fois — dans le binaire `vault` et dans son binaire de test — et une ligne couverte
-dans l'un mais pas dans l'autre est comptée manquante. Le rapport annoté, le rapport HTML et
-l'export lcov, qui prennent l'union des instanciations, n'affichent d'ailleurs **aucune** ligne
-manquante ici : seul le tableau récapitulatif en signale, et c'est lui qui commande la porte.
-
-**Pourquoi l'instanciation de test ne peut pas y parvenir.** Il lui faudrait un client ssh dans son
-`PATH`. Le faux client existe — c'est `crates/vault-cli/tests/faux-ssh/` — mais l'y placer suppose
-de modifier le `PATH` du processus de test, donc `std::env::set_var`, `unsafe` depuis l'édition
-2024. `unsafe_code = "forbid"` l'interdit dans cet espace de travail, et `forbid` ne se lève pas.
-Les tests d'intégration contournent la difficulté en lançant le **binaire** avec un `PATH` choisi,
-ce qui couvre le chemin réel — mais crédite l'autre instanciation.
-
-**Ce qui a été écarté**, et par quoi :
-
-| Alternative | Pourquoi non |
-|---|---|
-| Un trait de transport substituable en test | D-207 l'a examinée et rejetée : le chemin réel resterait non exécuté en intégration, donc soit non couvert, soit couvert par une exclusion **plus large** que celle-ci |
-| Exclure `cmd/send.rs` et `cmd/fetch.rs` en entier | Plus de deux cent cinquante lignes de validation et de refus cesseraient d'être mesurées pour six qui posent problème |
-| Renoncer à `--all-targets`, ou fusionner les instanciations | Modifie la porte elle-même, donc la garantie que le projet donne à ses lecteurs |
-
-**Ce que cette exclusion coûte, dit franchement.** Six lignes du produit ne sont plus comptées. Si
-l'une d'elles cessait un jour d'être exécutée — un `?` déplacé, un compte rendu oublié —, la porte
-de couverture ne le dirait pas. Ce sont les tests de `tests/transfer.rs` qui le diraient, en
-échouant : ils vérifient qu'un envoi nominal dépose un vault ouvrable à la destination et que son
-compte rendu la nomme. Le filet existe donc, il n'est simplement plus tendu par la porte 5.
-
-**Ce qui rendrait cette exclusion caduque** : que `std::env::set_var` redevienne appelable sans
-`unsafe`, que `cargo llvm-cov` fusionne les instanciations pour son tableau, ou qu'un moyen
-apparaisse de substituer le programme lancé sans introduire de couture dans le produit. Le jour où
-l'un des trois arrive, ce fichier doit être réintégré à la mesure et cette section retirée.

@@ -138,6 +138,55 @@ couvrir — la dernière section en tient compte.
 
 ---
 
+## Les trois portées d'un transfert, et ce que chacune établit
+
+Un export puis un import mettent en jeu **trois** vérifications distinctes. Elles ne se
+recouvrent pas, elles ne se remplacent pas, et la confusion entre elles est le malentendu le plus
+coûteux que ce document puisse dissiper.
+
+| | Ce qui vérifie | Quand | Ce que cela établit | Ce que cela n'établit **pas** |
+|---|---|---|---|---|
+| **Complétude** | Le sceau BLAKE3 du conteneur | À l'import, **sans passphrase** | Que le conteneur est arrivé entier, dans l'ordre, sans octet perdu ni ajouté | Que quiconque l'a produit était en droit de le faire |
+| **Intégrité du canal** | `ssh` — sa couche de transport | Pendant le transfert | Que ce qui a été reçu est ce que l'hôte distant a envoyé, et qu'aucun tiers n'a lu ni modifié le flux en route | Que l'hôte distant est celui qu'on croit, si son empreinte n'a jamais été vérifiée |
+| **Authenticité du contenu** | Les tags AEAD de XChaCha20-Poly1305 | Au **déverrouillage**, donc plus tard, et peut-être jamais | Que chaque octet restitué a bien été chiffré sous cette clé maîtresse | Rien sur les octets qu'on ne relit pas |
+
+### Un sceau vert ne détecte pas une falsification
+
+C'est la phrase à retenir, et elle mérite d'être dite sans détour.
+
+Le sceau est un **BLAKE3 sans clé**. N'importe qui peut en calculer un. Quiconque intercepte un
+conteneur, le remplace intégralement par un autre — le sien, fabriqué sous une passphrase qu'il
+connaît — et recalcule le sceau produit un conteneur que l'import acceptera sans broncher. Le
+sceau détecte l'**accident** : une troncature, un octet retourné, un transfert interrompu. Il ne
+détecte pas l'**intention**.
+
+Ce n'est pas un défaut de conception, c'est un partage du travail. Le sceau ne peut pas être
+authentifié, parce qu'il est vérifié **sans passphrase** — c'est tout son intérêt : constater
+qu'un fichier de dix gigaoctets est arrivé entier ne doit pas exiger de déverrouiller quoi que ce
+soit, ni de dériver une clé Argon2id. Ce qui authentifie, ce sont les tags AEAD, et ils exigent la
+clé maîtresse. Un conteneur substitué franchit donc le sceau, puis **échoue au déverrouillage** :
+la passphrase légitime ne désenveloppe pas une clé maîtresse qui n'est pas la sienne.
+
+### Ce que cela impose au lecteur
+
+- **Un conteneur accepté à l'import n'est pas un conteneur de confiance.** Il est complet. La
+  confiance vient d'ailleurs : du canal par lequel il est arrivé, et de la passphrase qui l'ouvre.
+- **Le canal compte donc réellement.** `ssh` est la seule des trois portées qui dise quelque chose
+  de la **provenance**, et seulement si l'empreinte de l'hôte distant a été vérifiée un jour. Un
+  « Are you sure you want to continue connecting? » accepté sans regarder annule cette portée-là.
+  C'est pourquoi `vault` refuse d'y répondre à la place de l'utilisateur (FR-029a) : la question
+  lui appartient.
+- **Un import réussi n'a rien déchiffré.** Il n'en avait ni le droit ni le moyen : aucune
+  passphrase ne lui a été demandée. Un vault importé peut donc être parfaitement complet et
+  parfaitement inutilisable, s'il n'est pas celui qu'on croit. Le seul contrôle qui tranche est
+  d'ouvrir le vault importé — et ce contrôle-là, `vault info` ne le fait pas non plus.
+
+SC-012 est cette exigence : que ce partage soit **écrit**, plutôt que déduit par un lecteur
+attentif ou, plus vraisemblablement, jamais.
+
+
+---
+
 ## SC-010 — 4 Go sous 2 Go de mémoire
 
 Exécuté sous limite mémoire imposée par le noyau, `./scripts/dev.sh --mem 2g`, en profil

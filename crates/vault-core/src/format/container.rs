@@ -37,7 +37,7 @@
 //! tentée. Le conteneur devient ainsi la cinquième surface de décodage du
 //! projet, aux côtés de l'en-tête, de l'index, des chemins et des blobs.
 
-use std::io::{Read, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 
 use serde::{Deserialize, Serialize};
 
@@ -96,6 +96,22 @@ const MAX_BLOB_PAYLOAD: u64 = 4_400_000_000;
 
 /// Nombre minimal de membres : le `header` et l'`index` sont obligatoires.
 const MIN_MEMBER_COUNT: u64 = 2;
+
+/// Taille du tampon interposé entre le conteneur et son flux.
+///
+/// Le conteneur ne choisit pas ses extrémités : un export écrit vers un fichier
+/// ou vers l'entrée standard de `ssh`, un import lit depuis un fichier ou
+/// depuis la sortie d'un `ssh`. Sans tampon, chaque appel de [`std::io::copy`]
+/// se traduirait par un appel système de huit kibioctets — la taille de son
+/// tampon de pile — et le prix se paierait sur un tuyau autant que sur un
+/// disque. La valeur retenue est celle du morceau du format
+/// (`crypto::stream::CHUNK_SIZE`) : les blobs sont déjà écrits par blocs de
+/// cette taille, les relire par la même n'introduit aucun découpage nouveau.
+///
+/// C'est SC-002 qui a révélé le besoin : sans tampon, un export coûtait 1,36
+/// fois une copie du répertoire pour un travail identique, la différence
+/// tenant entièrement au nombre d'appels système.
+const TAMPON: usize = 64 * 1024;
 
 /// Type d'un membre du conteneur.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -239,7 +255,7 @@ impl<W: Write> Write for HashingWriter<W> {
 /// import de contrôler l'espace disponible avant sa première écriture (FR-014
 /// et le cas limite du disque plein).
 pub(crate) struct ContainerWriter<W: Write> {
-    writer: HashingWriter<W>,
+    writer: HashingWriter<BufWriter<W>>,
     member_count: u64,
 }
 
@@ -256,8 +272,11 @@ impl<W: Write> ContainerWriter<W> {
         member_count: u64,
         payload_bytes: u64,
     ) -> Result<Self> {
+        // Le tampon est placé **sous** l'absorbeur d'empreinte : celui-ci voit
+        // le flux logique, octet pour octet, quel que soit le découpage des
+        // écritures effectives. L'empreinte ne dépend donc pas du tampon.
         let mut writer = HashingWriter {
-            inner: writer,
+            inner: BufWriter::with_capacity(TAMPON, writer),
             hasher: blake3::Hasher::new(),
             hashing: true,
         };
@@ -328,7 +347,13 @@ impl<W: Write> ContainerWriter<W> {
         };
         ciborium::into_writer(&repr, &mut self.writer).map_err(encodage)?;
         self.writer.flush()?;
-        Ok(self.writer.inner)
+        // `into_parts` plutôt que `into_inner` : le tampon vient d'être vidé,
+        // donc `into_inner` ne pourrait plus échouer — mais son type dit le
+        // contraire, et le chemin d'erreur qu'il impose d'écrire ne serait
+        // jamais emprunté. `into_parts` rend le flux sans détour et laisse la
+        // porte de couverture mesurer du code qui s'exécute.
+        let (inner, _tampon) = self.writer.inner.into_parts();
+        Ok(inner)
     }
 }
 
@@ -359,7 +384,7 @@ impl ContainerHeader {
 /// Le flux se lit d'un bout à l'autre, sans jamais revenir en arrière : c'est
 /// ce qui le rend utilisable dans un tube.
 pub(crate) struct ContainerReader<R: Read> {
-    reader: HashingReader<R>,
+    reader: HashingReader<BufReader<R>>,
     header: ContainerHeader,
     lus: u64,
     dernier_blob: Option<BlobId>,
@@ -380,8 +405,11 @@ impl<R: Read> ContainerReader<R> {
     /// - [`Error::UnsupportedFormatVersion`] si la version de conteneur ou celle
     ///   du vault transporté dépasse ce que ce logiciel sait lire.
     pub(crate) fn open(reader: R) -> Result<Self> {
+        // Même disposition qu'à l'écriture : le tampon est sous l'absorbeur,
+        // qui ne voit que les octets réellement rendus au lecteur. Une lecture
+        // anticipée du tampon n'entre donc pas dans l'empreinte.
         let mut reader = HashingReader {
-            inner: reader,
+            inner: BufReader::with_capacity(TAMPON, reader),
             hasher: blake3::Hasher::new(),
             hashing: true,
         };
@@ -535,6 +563,19 @@ impl<R: Read> ContainerReader<R> {
 
 /// Un échec d'encodage CBOR suppose une défaillance mémoire ou un écrivain
 /// rompu ; dans les deux cas le conteneur produit serait inexploitable.
+///
+/// # Ce chemin n'est plus atteignable par un flux rompu
+///
+/// Depuis que [`TAMPON`] s'interpose, `ciborium::into_writer` n'écrit plus
+/// dans le flux : il remplit le tampon, qui accepte toujours. Une rupture se
+/// signale au débordement ou au vidage, sous [`Error::Io`], et non ici. Ce
+/// qui reste possible est un échec de **sérialisation**, que les types de ce
+/// module ne peuvent pas provoquer.
+///
+/// La fonction est conservée plutôt que dissoute : le jour où un champ de
+/// largeur variable entrerait dans un cadre, c'est ici que son refus se
+/// lirait. Son verdict est fixé par un test, faute de quoi rien ne l'exercerait
+/// plus.
 fn encodage<E>(_: ciborium::ser::Error<E>) -> Error {
     Error::Corrupted
 }
@@ -1064,24 +1105,59 @@ mod tests {
         ));
     }
 
+    /// Un échec d'encodage est une corruption, et non une erreur
+    /// d'entrée-sortie : le conteneur produit serait inexploitable, ce qui
+    /// n'est pas la même chose qu'un flux qui se ferme.
+    #[test]
+    fn un_echec_d_encodage_est_une_corruption() {
+        let erreur = ciborium::ser::Error::<std::io::Error>::Value("indicible".to_owned());
+        assert!(matches!(encodage(erreur), Error::Corrupted));
+    }
+
     /// Un écrivain rompu remonte une erreur d'entrée-sortie, sans panique.
+    ///
+    /// Le tampon déplace le **moment** où la rupture se voit, et c'est voulu :
+    /// l'en-tête tient dans le tampon, donc `begin` réussit alors que rien n'a
+    /// atteint le flux. Ce qui compte est qu'aucune erreur ne soit perdue —
+    /// `finish` vide le tampon avant de rendre la main, et échoue là. Un
+    /// conteneur ne peut donc pas être annoncé complet sans l'être.
+    /// Un flux qui refuse tout : ce qu'un tuyau `ssh` rompu présente au
+    /// conteneur.
+    struct Rompu;
+
+    impl Write for Rompu {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("tube fermé"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("tube fermé"))
+        }
+    }
+
     #[test]
     fn un_ecrivain_rompu_remonte_l_erreur() {
-        struct Rompu;
-        impl Write for Rompu {
-            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-                Err(std::io::Error::other("tube fermé"))
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Err(std::io::Error::other("tube fermé"))
-            }
-        }
-
         assert!(Write::flush(&mut Rompu).is_err());
-        assert!(matches!(
-            ContainerWriter::begin(Rompu, 1, 2, 0),
-            Err(Error::Corrupted | Error::Io(_))
-        ));
+        let writer =
+            ContainerWriter::begin(Rompu, 1, 2, 0).expect("l'en-tête tient dans le tampon");
+        let scelle = writer.finish().map(|_| ());
+        assert!(matches!(scelle, Err(Error::Io(_))), "{scelle:?}");
+    }
+
+    /// Une charge plus grosse que le tampon rompt dès qu'elle le déborde, sans
+    /// attendre le sceau : une rupture de tuyau se voit au premier débordement,
+    /// pas au bout de plusieurs gigaoctets.
+    #[test]
+    fn un_ecrivain_rompu_echoue_des_le_debordement_du_tampon() {
+        let charge = vec![0_u8; TAMPON * 2];
+        let mut writer =
+            ContainerWriter::begin(Rompu, 1, 2, charge.len() as u64).expect("ouvrable");
+        let ecrit = writer.member(
+            MemberKind::Header,
+            None,
+            charge.len() as u64,
+            &mut &charge[..],
+        );
+        assert!(matches!(ecrit, Err(Error::Io(_))), "{ecrit:?}");
     }
 
     /// Un lecteur rompu remonte une erreur d'entrée-sortie, sans panique.

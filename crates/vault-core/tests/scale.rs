@@ -34,9 +34,10 @@
 //! sans rien révéler de ce que ce test cherche, à savoir comment le coût varie
 //! avec le **nombre d'entrées**.
 
+use std::io::{Read as _, Write as _};
 use std::time::{Duration, Instant};
 
-use vault_core::{AddMode, KdfParams, OnConflict, SecretString, Vault, VaultPath};
+use vault_core::{AddMode, ExportEnvelope, KdfParams, OnConflict, SecretString, Vault, VaultPath};
 
 /// Nombre d'entrées exigé par SC-009.
 const ENTREES: usize = 10_000;
@@ -159,4 +160,149 @@ fn lister_un_sous_dossier_reste_immediat() {
     // Les cent fichiers, plus l'entrée du dossier lui-même.
     assert_eq!(listees.len(), 101);
     assert!(ecoule < BORNE, "{ecoule:?}");
+}
+
+/// SC-002 : un export ne coûte pas plus de 20 % de plus qu'une copie.
+///
+/// # Ce que cette mesure établit
+///
+/// SC-002 n'est pas une exigence de rapidité, c'est une exigence de **nature**.
+/// Un export qui déchiffrerait le contenu pour le rechiffrer paierait une
+/// dérivation de clé par blob et deux passes AEAD sur chaque octet : le coût
+/// s'en verrait, et de très loin. Rester dans les 20 % d'une copie d'octets
+/// établit qu'il ne se passe rien de tel — que les blobs sont recopiés tels
+/// qu'ils sont sur le disque, ce que FR-002 exige et que
+/// `no_plaintext.rs` vérifie par ailleurs sur le contenu produit.
+///
+/// # Pourquoi la référence est une copie *octet par octet*
+///
+/// `std::fs::copy` n'est pas la bonne référence, et le choix mérite d'être
+/// écrit. Sur btrfs, XFS ou APFS, elle délègue au noyau, qui peut se contenter
+/// de partager les extents sans déplacer un seul octet : la copie devient
+/// quasi instantanée et le rapport n'a plus de sens — il mesurerait l'absence
+/// de travail, pas le travail. La référence retenue lit et réécrit réellement
+/// chaque octet, ce qui est exactement ce que fait l'export. C'est la seule
+/// comparaison qui compare deux fois la même chose.
+///
+/// # Pourquoi le minimum de plusieurs passages
+///
+/// Un exécuteur partagé subit des voisins. La moyenne les inclut, le minimum
+/// les écarte : de deux passages sur les mêmes octets, le plus rapide est
+/// celui qui a le moins attendu autre chose. Un tour de chauffe précède les
+/// mesures pour que le cache de pages serve les deux camps également.
+#[test]
+fn un_export_ne_coute_pas_plus_qu_une_copie() {
+    /// Assez d'octets pour que le chiffrement se verrait, assez peu pour que
+    /// la suite reste courte.
+    const FICHIERS: usize = 200;
+    const TAILLE: usize = 64 * 1024;
+    /// Le tampon de la copie de référence — la taille de morceau du format,
+    /// et non une valeur choisie pour arranger le rapport.
+    const MORCEAU: usize = 64 * 1024;
+    /// Trois mesures, dont on garde la meilleure de chaque camp.
+    const PASSAGES: usize = 3;
+    /// La marge de SC-002.
+    const MARGE: f64 = 1.20;
+
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let source = atelier.path().join("source");
+    std::fs::create_dir(&source).expect("créable");
+    for numero in 0..FICHIERS {
+        let motif = u8::try_from(numero % 251).expect("reste inférieur à 251");
+        std::fs::write(
+            source.join(format!("f-{numero:04}.bin")),
+            vec![motif; TAILLE],
+        )
+        .expect("écrivable");
+    }
+
+    let coffre = atelier.path().join("coffre");
+    let mut vault = Vault::create(&coffre, secret(), params()).expect("créable");
+    vault
+        .add_dir(
+            &source,
+            &VaultPath::root(),
+            AddMode::Copy,
+            OnConflict::Fail,
+            &mut |_| {},
+        )
+        .expect("ajoutable");
+    vault.lock();
+
+    // Une copie du répertoire, octet par octet — voir le commentaire de tête.
+    let copier = |vers: &std::path::Path| -> std::io::Result<()> {
+        for entree in walk(&coffre) {
+            let relatif = entree.strip_prefix(&coffre).expect("sous le coffre");
+            if let Some(parent) = vers.join(relatif).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut lu = std::fs::File::open(&entree)?;
+            let mut ecrit = std::fs::File::create(vers.join(relatif))?;
+            // Écrit à la main, et non par `std::io::copy` : celle-ci se
+            // spécialise en `copy_file_range`, qui délègue au noyau et peut ne
+            // déplacer aucun octet. Voir le commentaire de tête.
+            let mut tampon = vec![0_u8; MORCEAU];
+            loop {
+                let lus = lu.read(&mut tampon)?;
+                if lus == 0 {
+                    break;
+                }
+                ecrit.write_all(&tampon[..lus])?;
+            }
+            ecrit.flush()?;
+        }
+        Ok(())
+    };
+
+    let exporter = |vers: &std::path::Path| -> vault_core::Result<()> {
+        let mut sortie = std::io::BufWriter::new(std::fs::File::create(vers)?);
+        Vault::export(&coffre, ExportEnvelope::Source, &mut sortie)?;
+        sortie.flush()?;
+        Ok(())
+    };
+
+    // Tour de chauffe : le cache de pages doit servir les deux camps.
+    let chauffe = atelier.path().join("chauffe");
+    copier(&chauffe).expect("copiable");
+    exporter(&atelier.path().join("chauffe.vaultx")).expect("exportable");
+
+    let mut copie = Duration::MAX;
+    let mut export = Duration::MAX;
+    for passage in 0..PASSAGES {
+        let vers = atelier.path().join(format!("copie-{passage}"));
+        let depart = Instant::now();
+        copier(&vers).expect("copiable");
+        copie = copie.min(depart.elapsed());
+        std::fs::remove_dir_all(&vers).expect("supprimable");
+
+        let vers = atelier.path().join(format!("export-{passage}.vaultx"));
+        let depart = Instant::now();
+        exporter(&vers).expect("exportable");
+        export = export.min(depart.elapsed());
+        std::fs::remove_file(&vers).expect("supprimable");
+    }
+
+    let rapport = export.as_secs_f64() / copie.as_secs_f64();
+    assert!(
+        rapport <= MARGE,
+        "SC-002 : export {export:?} contre copie {copie:?}, soit {rapport:.2}× — \
+au-delà de {MARGE:.2}×, quelque chose déchiffre"
+    );
+}
+
+/// Tous les fichiers du répertoire d'un vault, dossier `blobs` compris.
+fn walk(racine: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut trouves = Vec::new();
+    let mut a_visiter = vec![racine.to_path_buf()];
+    while let Some(dossier) = a_visiter.pop() {
+        for entree in std::fs::read_dir(&dossier).expect("lisible") {
+            let chemin = entree.expect("lisible").path();
+            if chemin.is_dir() {
+                a_visiter.push(chemin);
+            } else {
+                trouves.push(chemin);
+            }
+        }
+    }
+    trouves
 }
