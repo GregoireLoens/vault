@@ -831,3 +831,72 @@ fn le_rapatriement_refuse_une_source_mal_formee_et_emploie_le_defaut() {
         atelier.journal()
     );
 }
+
+// ---------------------------------------------------------------------------
+// FR-035 : ce qu'un transfert échoué laisse, et comment le reconnaître — T062
+// ---------------------------------------------------------------------------
+
+/// **Un reliquat porte un nom qui dit ce qu'il est, et sa suppression est sans
+/// conséquence.**
+///
+/// C'est tout ce que FR-035 demande, et c'est ce qui rend le nommage de D-208
+/// vérifiable plutôt que déclaratif : un répertoire d'attente n'est **pas** un
+/// vault — il n'a pas été vérifié —, et rien d'autre ne le désigne.
+#[test]
+fn un_reliquat_de_transfert_se_reconnait_et_se_supprime_sans_consequence() {
+    let atelier = Atelier::neuf();
+    let coffre = atelier.coffre_volumineux("coffre");
+    let destination = atelier.chemin().join("recu-vault");
+
+    // Un voisin, pour vérifier qu'aucune suppression ne le touche.
+    let voisin = atelier.coffre("voisin");
+
+    atelier
+        .vault()
+        .env("FAUX_SSH_MODE", "signal")
+        .args([
+            "send",
+            en_texte(&coffre),
+            &format!("poste-b:{}", en_texte(&destination)),
+            "--remote-command",
+            en_texte(&binaire()),
+        ])
+        .assert()
+        .code(9);
+
+    // La destination n'est pas un vault ouvrable.
+    assert!(
+        vault_core::Vault::open(&destination).is_err(),
+        "aucun vault ouvrable ne doit subsister"
+    );
+
+    // Tout reliquat porte le nom que D-208 lui donne, et n'est pas ouvrable.
+    let reliquats: Vec<PathBuf> = std::fs::read_dir(atelier.chemin())
+        .expect("listable")
+        .filter_map(std::result::Result::ok)
+        .map(|entree| entree.path())
+        .filter(|chemin| {
+            chemin
+                .file_name()
+                .is_some_and(|nom| nom.to_string_lossy().contains(".vault-entrant-"))
+        })
+        .collect();
+
+    for reliquat in &reliquats {
+        assert!(
+            vault_core::Vault::open(reliquat).is_err(),
+            "un répertoire d'attente n'est pas un vault : {reliquat:?}"
+        );
+        std::fs::remove_dir_all(reliquat).expect("supprimable sans conséquence");
+    }
+
+    // Le voisin est intact : supprimer un reliquat n'a touché à rien d'autre.
+    assert!(
+        vault_core::Vault::open(&voisin).is_ok(),
+        "un vault existant ne doit pas avoir été affecté"
+    );
+    assert!(
+        coffre.join("header").is_file(),
+        "le vault source est intact"
+    );
+}

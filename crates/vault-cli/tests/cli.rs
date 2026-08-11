@@ -517,3 +517,44 @@ fn le_sondage_ne_dit_rien_d_autre_que_son_code() {
         .code(5)
         .stdout(predicates::str::is_empty());
 }
+
+/// XFR-040, XFR-041 — T061 : l'en-tête d'un conteneur s'obtient **sans
+/// passphrase**, et rien de plus que lui.
+#[test]
+fn l_en_tete_d_un_conteneur_s_obtient_sans_terminal() {
+    let _serie = en_serie();
+    let atelier = tempfile::tempdir().expect("répertoire temporaire");
+    let coffre = coffre_neuf(atelier.path());
+    let conteneur = atelier.path().join("sauvegarde.vaultx");
+
+    vault()
+        .args([
+            "export",
+            "--to",
+            en_texte(&conteneur),
+            "--vault",
+            en_texte(&coffre),
+        ])
+        .assert()
+        .code(0);
+
+    let sortie = vault()
+        .args(["info", en_texte(&conteneur)])
+        .assert()
+        .code(0)
+        .stdout(predicates::str::contains("Version du conteneur : 1"))
+        .stdout(predicates::str::contains("Membres"))
+        .get_output()
+        .stdout
+        .clone();
+    // XFR-041 : ce que le conteneur **contient** n'y figure pas.
+    let sortie = String::from_utf8(sortie).expect("UTF-8");
+    assert!(!sortie.contains("note"), "{sortie}");
+
+    // Un vault désigné par erreur est refusé en disant quoi faire.
+    vault()
+        .args(["info", en_texte(&coffre.join("header"))])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("--vault"));
+}

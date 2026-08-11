@@ -267,7 +267,33 @@ est celle du vault de référence, publiée par [`format.md`](./format.md) §7 b
 
 ---
 
-## 9. Ce que ce format ne contient pas
+## 9. Ce qu'un dépaquetage laisse à côté, et comment le reconnaître
+
+Un dépaquetage n'écrit pas directement à sa destination : il écrit à côté, vérifie, puis bascule
+d'un seul renommage. Deux noms peuvent donc apparaître dans le répertoire parent, et **ils ne
+disent pas la même chose**.
+
+| Nom | Ce que c'est | Ouvrable comme un vault ? |
+|---|---|---|
+| `<destination>.vault-entrant-<aléa>` | Une réception **inachevée** : elle n'a pas été vérifiée | **Non** |
+| `<destination>.vault-remplace-<secondes Unix>` | Le vault que vous aviez, **mis de côté** par un remplacement | **Oui**, complet et intact |
+
+La distinction est celle qui compte le jour où l'on regarde un répertoire après un incident.
+
+**Un répertoire d'attente n'est pas un vault.** Il porte peut-être un `header` et un `objects/`,
+mais son sceau n'a pas été contrôlé : rien ne dit qu'il est complet. Le supprimer est **sans
+conséquence** — aucun vault en place ne le désigne, et rien ne s'y réfère. Il ne subsiste d'ailleurs
+qu'après une interruption du processus : un échec ordinaire le retire de lui-même.
+
+**Un vault remplacé, lui, ne doit pas être supprimé à la légère.** C'est votre vault précédent,
+entier et ouvrable avec sa passphrase. Il est déplacé plutôt qu'effacé parce qu'un remplacement
+porte sur ce que l'utilisateur n'a **pas** désigné, et se déclenche au moment où quelque chose ne va
+déjà pas. L'horodatage évite qu'une seconde restauration écrase la sauvegarde de la première. Son
+retrait revient à vous, et à vous seul.
+
+---
+
+## 10. Ce que ce format ne contient pas
 
 Énoncé ici pour que l'absence soit lisible, et non découverte.
 

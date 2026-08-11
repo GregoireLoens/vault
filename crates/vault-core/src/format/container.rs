@@ -332,6 +332,28 @@ impl<W: Write> ContainerWriter<W> {
     }
 }
 
+impl ContainerHeader {
+    /// Lit l'en-tête d'un conteneur, et **rien de plus**.
+    ///
+    /// C'est ce que `vault info` a le droit d'afficher (FR-034) : la version du
+    /// format, celle du vault transporté, le nombre de membres et le volume.
+    /// Rien de ce qu'il rend ne renseigne sur le **contenu** — pas plus que
+    /// l'en-tête d'un vault sur disque, dont il est l'exact pendant.
+    ///
+    /// `magic` est vérifié **avant toute autre chose** : un flux qui n'est pas
+    /// un conteneur est refusé sans qu'une seule de ses valeurs ait été
+    /// interprétée.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Corrupted`] si le flux n'est pas un conteneur lisible ;
+    /// - [`Error::UnsupportedFormatVersion`] si sa version, ou celle du vault
+    ///   qu'il transporte, dépasse ce que ce logiciel sait lire.
+    pub fn read(source: &mut dyn Read) -> Result<Self> {
+        Ok(ContainerReader::open(source)?.header())
+    }
+}
+
 /// Lecture d'un conteneur, membre après membre.
 ///
 /// Le flux se lit d'un bout à l'autre, sans jamais revenir en arrière : c'est
@@ -596,6 +618,24 @@ mod tests {
         assert_eq!(membres[0].2, vec![0xa5, 0x64, 0x6b, 0x69, 0x6e]);
         assert_eq!(membres[1].2, vec![0xff; 64]);
         assert_eq!(membres[2].2, vec![0x00; 3]);
+    }
+
+    /// FR-034 : l'en-tête se lit seul, sans passphrase et sans dépaqueter —
+    /// et c'est **tout** ce que `vault info` obtient d'un conteneur.
+    #[test]
+    fn l_en_tete_se_lit_seul() {
+        let octets = temoin();
+        let entete = ContainerHeader::read(&mut &octets[..]).expect("lisible");
+
+        assert_eq!(entete.container_version, CONTAINER_VERSION);
+        assert_eq!(entete.member_count, 4);
+
+        // Un flux qui n'est pas un conteneur est refusé sur la seule constante
+        // de tête, avant que rien d'autre n'ait été interprété.
+        assert!(matches!(
+            ContainerHeader::read(&mut &b"pas un conteneur"[..]),
+            Err(Error::Corrupted)
+        ));
     }
 
     #[test]

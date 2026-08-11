@@ -106,8 +106,11 @@ enum Commande {
     },
     /// Change la passphrase. Immédiat : le contenu n'est pas réécrit.
     Passwd,
-    /// Affiche les paramètres publics du vault, sans le déverrouiller.
-    Info,
+    /// Affiche les paramètres publics d'un vault ou d'un conteneur.
+    Info {
+        /// Conteneur à interroger. Sans lui, c'est le vault de `--vault`.
+        conteneur: Option<PathBuf>,
+    },
     /// Extrait vers le disque, en clair.
     Extract {
         /// Entrées à extraire.
@@ -276,7 +279,12 @@ fn executer(cli: &Cli, console: &mut dyn Console) -> CliResult<()> {
             },
         ),
         Commande::Passwd => cmd::passwd::executer(&mut contexte),
-        Commande::Info => cmd::info::executer(&mut contexte),
+        Commande::Info { conteneur } => cmd::info::executer(
+            &mut contexte,
+            &cmd::info::Options {
+                conteneur: conteneur.clone(),
+            },
+        ),
         Commande::Extract {
             chemins,
             destination,
