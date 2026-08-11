@@ -50,7 +50,18 @@ use crate::ops::{HEADER_FILE, INDEX_FILE, OBJECTS_DIR, blob_path};
 use crate::{UnlockedVault, Vault};
 
 /// Nombre maximal de noms de remplacement essayés dans la même seconde.
-const MAX_REPLACE_ATTEMPTS: u32 = 1000;
+///
+/// Cent, et non mille. Le suffixe numéraire n'existe que pour départager deux
+/// restaurations tombées dans la **même seconde** ; or une restauration écrit
+/// un vault entier, fsync compris. Cent en une seconde n'est pas un scénario
+/// improbable, c'est un scénario impossible — et si la borne était malgré tout
+/// atteinte, l'échec est explicite et la seconde suivante rouvre cent noms.
+///
+/// Mille rendait par ailleurs cette borne **inéprouvable** : saturer une
+/// seconde demandait mille créations de fichiers, ce qui dépasse la seconde sur
+/// NTFS. Le test visait alors une seconde libre et la borne n'était jamais
+/// atteinte. Une garantie qu'on ne peut pas éprouver n'en est pas une.
+const MAX_REPLACE_ATTEMPTS: u32 = 100;
 
 /// Ce que l'import fait d'une destination déjà occupée par un vault.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -846,7 +857,8 @@ mod tests {
 
         // Le nom de base est pris pour la seconde courante et les deux
         // suivantes : le test reste valable si l'horloge avance pendant son
-        // exécution.
+        // exécution. Un seul nom par seconde suffit ici — c'est le **premier**
+        // suffixe qu'on veut voir apparaître, pas la borne.
         for seconde in [secondes, secondes + 1, secondes + 2] {
             std::fs::write(
                 atelier
@@ -873,28 +885,52 @@ mod tests {
     /// la recherche plutôt que d'écraser une sauvegarde.
     #[test]
     fn un_nommage_sature_echoue_plutot_que_d_ecraser() {
+        /// Reprises accordées à la saturation avant de renoncer.
+        const REPRISES: u32 = 8;
+
         let atelier = tempfile::tempdir().expect("répertoire temporaire");
         let destination = atelier.path().join("coffre");
-        let secondes = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
 
-        // Les mille et un noms possibles pour cette seconde sont pris. Le test
-        // les crée à la seconde courante **et** à la suivante, pour rester
-        // valable si l'horloge avance pendant son exécution.
-        for seconde in [secondes, secondes + 1] {
-            let base = format!("coffre.vault-remplace-{seconde}");
-            std::fs::write(atelier.path().join(&base), b"").expect("écrivable");
-            for rang in 1..MAX_REPLACE_ATTEMPTS {
-                std::fs::write(atelier.path().join(format!("{base}-{rang}")), b"")
-                    .expect("écrivable");
-            }
-        }
+        // **La saturation doit s'achever dans la seconde qu'elle sature**,
+        // sinon la recherche vise la seconde suivante — encore libre — et la
+        // borne n'est jamais atteinte. C'est exactement ce qui rendait ce test
+        // vert sur ext4 et rouge sur NTFS.
+        //
+        // Plutôt que de tabler sur une marge devinée, on constate : si la
+        // création a traversé une frontière de seconde, on recommence. Avec
+        // cent noms, la première tentative suffit sauf à démarrer à la toute
+        // fin d'une seconde.
+        let saturee = (0..REPRISES).any(|_| {
+            let seconde = secondes_unix();
+            saturer(atelier.path(), seconde);
+            secondes_unix() == seconde
+        });
 
+        assert!(
+            saturee,
+            "la saturation n'a jamais tenu dans une seule seconde"
+        );
         assert!(matches!(
             nom_de_remplacement(&destination),
             Err(Error::AlreadyExists)
         ));
+    }
+
+    /// L'instant présent, en secondes Unix — le même que celui dont
+    /// [`nom_de_remplacement`] tire son suffixe.
+    fn secondes_unix() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
+
+    /// Prend **tous** les noms de remplacement possibles pour cette seconde.
+    fn saturer(atelier: &Path, seconde: u64) {
+        let base = format!("coffre.vault-remplace-{seconde}");
+        std::fs::write(atelier.join(&base), b"").expect("écrivable");
+        for rang in 1..MAX_REPLACE_ATTEMPTS {
+            std::fs::write(atelier.join(format!("{base}-{rang}")), b"").expect("écrivable");
+        }
     }
 }
