@@ -797,9 +797,10 @@ mod tests {
         let atelier = tempfile::tempdir().expect("répertoire temporaire");
         let (_, conteneur) = coffre_et_conteneur(atelier.path());
 
+        // Même verrou que le test jumeau de `ops::create` : le répertoire
+        // courant est global au processus (voir `ops::serie`).
+        let _serie = crate::ops::serie::repertoire_courant();
         let ancien = std::env::current_dir().expect("répertoire courant");
-        // `set_current_dir` est global au processus ; ce test rétablit l'état
-        // avant de rendre la main.
         std::env::set_current_dir(atelier.path()).expect("déplaçable");
         let resultat = importer(&conteneur, Path::new("relatif"), ImportPolicy::Refuse);
         std::env::set_current_dir(&ancien).expect("rétablissable");

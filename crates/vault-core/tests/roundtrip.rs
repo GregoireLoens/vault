@@ -446,14 +446,20 @@ fn export_import_restitue_le_vault_octet_pour_octet() {
 
     // VR-I1 : les noms sont conservés en octets bruts. Un nom non conforme à
     // l'UTF-8 doit donc faire le voyage comme les autres, et il est ajouté par
-    // le chemin de vault plutôt que depuis le disque, tous les systèmes de
-    // fichiers ne l'acceptant pas.
+    // le chemin de vault plutôt que depuis le disque.
+    //
+    // **Il vit à part, sous `hostile/`, et c'est délibéré** : ce nom n'est
+    // représentable ni sur APFS ni sur NTFS, et l'extraire y échouerait par
+    // `UnrepresentableName`. Le mettre dans le corpus rendrait donc ce test
+    // vert sur Linux et rouge ailleurs — pour une raison qui n'a rien à voir
+    // avec ce qu'il éprouve. Sa survie se vérifie par l'**index**, comme le
+    // fait déjà `tout_nom_hostile_traverse_l_index_intact`.
     let hostile = atelier.path().join("hostile.bin");
     std::fs::write(&hostile, b"octets bruts").expect("écrivable");
     vault
         .add_file(
             &hostile,
-            &chemin(&[b"a", b"\xff\xfe non-utf8"]),
+            &chemin(&[b"hostile", b"\xff\xfe non-utf8"]),
             AddMode::Copy,
             OnConflict::Fail,
         )
@@ -494,11 +500,20 @@ fn export_import_restitue_le_vault_octet_pour_octet() {
         .expect("déverrouillable");
     assert_eq!(session.list(None).len(), entrees_attendues);
 
+    // L'extraction porte sur le corpus **représentable**, entrée par entrée :
+    // extraire la racine emporterait le nom non conforme à l'UTF-8, que ni
+    // APFS ni NTFS n'acceptent.
     let sortie = atelier.path().join("sortie");
     std::fs::create_dir(&sortie).expect("créable");
-    session
-        .extract(&VaultPath::root(), &sortie, OnConflict::Fail)
-        .expect("extractible");
+    for entree in [
+        chemin(&[b"a"]),
+        chemin(&["accentué — é à ù.txt".as_bytes()]),
+        chemin(&[b"dossier-vide"]),
+    ] {
+        session
+            .extract(&entree, &sortie, OnConflict::Fail)
+            .expect("extractible");
+    }
 
     // Le contenu ressort identique, arborescence profonde et fichier vide
     // compris.
@@ -515,10 +530,11 @@ fn export_import_restitue_le_vault_octet_pour_octet() {
     );
 
     // VR-I1 : le nom non conforme à l'UTF-8 a traversé le conteneur intact. Il
-    // est vérifié par l'index plutôt que par le disque, tous les systèmes de
-    // fichiers ne l'acceptant pas.
+    // se vérifie par l'index, jamais par le disque.
     assert!(
-        session.stat(&chemin(&[b"a", b"\xff\xfe non-utf8"])).is_ok(),
+        session
+            .stat(&chemin(&[b"hostile", b"\xff\xfe non-utf8"]))
+            .is_ok(),
         "le nom brut doit survivre au voyage"
     );
 }
